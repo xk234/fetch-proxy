@@ -1,27 +1,47 @@
 
 /**
- * XK Cloudflare Pages Proxy 2.0 — Apex+
+ * XK Cloudflare Pages Proxy 2.0 — Apex+ Cloak
  * -------------------------------------------------------
- * Sticky-origin proxy that actually works on real sites
- * (DuckDuckGo, MacVG-style hubs, etc.)
+ * Sticky-origin proxy + advanced tab cloaking system
  *
- * New in this build:
- *  - Root `/` is overridden by the sticky hostname
- *  - ?xk.index          → clear sticky origin, show real homepage
- *  - ?xk.ls.wipe        → wipe localStorage
- *  - ?xk.idb.wipe       → wipe IndexedDB
- *  - ?xk.opfs.wipe      → wipe Origin Private File System
- *  - ?xk.ls.view / ?xk.idb.view / ?xk.opfs.view → simple viewers
- *  - Trailing-slash normalization (these proxies work better with it)
- *  - Per-IP rate limit 100/min + device IP-hash bans
+ * New:
+ *  ?xk.tab.favicon=Google|clever|google.com|...
+ *  ?xk.tab.title=Whatever
+ *  ?xk.cloak=1|0|yes|no|true|false
+ *
+ * Cloak creates a blob: page with matching title/favicon,
+ * embeds the current proxied page in a fully-permissioned iframe,
+ * actively syncs title + favicon, and uses location.replace
+ * so the omnibox only shows blob:...
+ * (monitoring extensions like Blocksi / GoGuardian cannot see blob: pages)
  */
 
-const VERSION = "2.0.1-apex+";
+const VERSION = "2.0.2-apex-cloak";
 
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const RATE_LIMIT_MAX = 100;
 const COOKIE_ORIGIN = "xk_origin";
-const COOKIE_MAX_AGE = 60 * 60 * 24 * 7; // 7 days
+const COOKIE_MAX_AGE = 60 * 60 * 24 * 7;
+
+// Common shortcuts for favicon
+const FAVICON_SHORTCUTS = {
+  google: "https://www.google.com",
+  clever: "https://clever.com",
+  canvas: "https://canvas.instructure.com",
+  schoology: "https://www.schoology.com",
+  classroom: "https://classroom.google.com",
+  drive: "https://drive.google.com",
+  docs: "https://docs.google.com",
+  gmail: "https://mail.google.com",
+  outlook: "https://outlook.live.com",
+  office: "https://www.office.com",
+  microsoft: "https://www.microsoft.com",
+  youtube: "https://www.youtube.com",
+  github: "https://github.com",
+  wikipedia: "https://www.wikipedia.org",
+  duckduckgo: "https://duckduckgo.com",
+  bing: "https://www.bing.com",
+};
 
 // ====================== HELPERS ======================
 
@@ -42,6 +62,12 @@ async function hashIP(ip) {
     .slice(0, 24);
 }
 
+function truthy(val) {
+  if (val == null) return false;
+  const v = String(val).toLowerCase().trim();
+  return v === "1" || v === "true" || v === "yes" || v === "on";
+}
+
 function parseAllXkParams(url) {
   const params = url.searchParams;
   const result = {
@@ -54,6 +80,9 @@ function parseAllXkParams(url) {
     idbView: params.has("xk.idb.view"),
     opfsWipe: params.has("xk.opfs.wipe"),
     opfsView: params.has("xk.opfs.view"),
+    tabFavicon: params.get("xk.tab.favicon") || null,
+    tabTitle: params.get("xk.tab.title") || null,
+    cloak: truthy(params.get("xk.cloak")),
   };
 
   if (params.has("xk.proxy.http")) {
@@ -65,7 +94,6 @@ function parseAllXkParams(url) {
     result.headersMode = params.get("xk.proxy.headers") || "iframe";
   }
 
-  // Clean params that should never reach the target
   const clean = new URLSearchParams();
   for (const [k, v] of params.entries()) {
     if (!k.startsWith("xk.")) clean.append(k, v);
@@ -154,12 +182,26 @@ function getOriginFromCookie(request) {
 }
 
 function ensureTrailingSlash(pathname) {
-  // Many static sites and game hubs expect trailing slash on directories
   if (pathname === "/" || pathname.endsWith("/")) return pathname;
-  // Heuristic: if it looks like a directory (no extension), add slash
   const last = pathname.split("/").pop() || "";
   if (!last.includes(".")) return pathname + "/";
   return pathname;
+}
+
+function resolveFaviconHost(value) {
+  if (!value) return null;
+  const key = value.toLowerCase().trim();
+  if (FAVICON_SHORTCUTS[key]) return FAVICON_SHORTCUTS[key];
+  // treat as hostname
+  if (key.includes(".") || key.startsWith("http")) {
+    try {
+      const u = key.startsWith("http") ? new URL(key) : new URL("https://" + key);
+      return u.origin;
+    } catch {
+      return null;
+    }
+  }
+  return null;
 }
 
 // ====================== RATE LIMIT + BAN ======================
@@ -197,114 +239,224 @@ async function checkBanAndRate(request, env) {
   return { blocked: false, ipHash };
 }
 
-// ====================== CLIENT CONTROL SCRIPT ======================
+// ====================== CLIENT CONTROL + CLOAK SCRIPT ======================
 
-function buildControlScript(opts) {
-  // Injected only when a wipe/view command is present
-  const actions = [];
+function buildClientScript(opts, proxyOrigin) {
+  const parts = [];
 
+  // ---- Storage tools ----
   if (opts.lsWipe) {
-    actions.push(`
-      try {
-        localStorage.clear();
-        sessionStorage.clear();
-        console.log("[XK] localStorage + sessionStorage wiped");
-      } catch(e){ console.error(e); }
+    parts.push(`
+      try { localStorage.clear(); sessionStorage.clear(); console.log("[XK] localStorage wiped"); } catch(e){}
     `);
   }
-
   if (opts.idbWipe) {
-    actions.push(`
-      (async () => {
-        try {
-          const dbs = await indexedDB.databases();
-          for (const db of dbs) {
-            if (db.name) indexedDB.deleteDatabase(db.name);
-          }
-          console.log("[XK] IndexedDB wiped");
-        } catch(e){ console.error(e); }
-      })();
+    parts.push(`
+      (async()=>{ try {
+        const dbs = await indexedDB.databases();
+        for (const db of dbs) if (db.name) indexedDB.deleteDatabase(db.name);
+        console.log("[XK] IndexedDB wiped");
+      } catch(e){} })();
     `);
   }
-
   if (opts.opfsWipe) {
-    actions.push(`
-      (async () => {
-        try {
-          if (navigator.storage && navigator.storage.getDirectory) {
-            const root = await navigator.storage.getDirectory();
-            for await (const [name] of root.entries()) {
-              await root.removeEntry(name, { recursive: true });
-            }
-            console.log("[XK] OPFS wiped");
-          }
-        } catch(e){ console.error(e); }
-      })();
+    parts.push(`
+      (async()=>{ try {
+        if (navigator.storage?.getDirectory) {
+          const root = await navigator.storage.getDirectory();
+          for await (const [name] of root.entries()) await root.removeEntry(name,{recursive:true});
+          console.log("[XK] OPFS wiped");
+        }
+      } catch(e){} })();
     `);
   }
-
-  // Simple viewers
   if (opts.lsView) {
-    actions.push(`
+    parts.push(`
       try {
         const data = {};
-        for (let i = 0; i < localStorage.length; i++) {
-          const k = localStorage.key(i);
-          data[k] = localStorage.getItem(k);
-        }
-        console.log("[XK] localStorage contents:", data);
-        document.body.insertAdjacentHTML("afterbegin",
-          '<pre style="background:#111;color:#0f0;padding:12px;z-index:99999;position:relative;max-height:40vh;overflow:auto">' +
-          JSON.stringify(data, null, 2) + "</pre>");
-      } catch(e){ console.error(e); }
+        for (let i=0;i<localStorage.length;i++){ const k=localStorage.key(i); data[k]=localStorage.getItem(k); }
+        console.log("[XK] localStorage:", data);
+        document.body.insertAdjacentHTML("afterbegin", '<pre style="background:#111;color:#0f0;padding:12px;z-index:999999;position:relative;max-height:40vh;overflow:auto">'+JSON.stringify(data,null,2)+'</pre>');
+      } catch(e){}
     `);
   }
-
   if (opts.idbView) {
-    actions.push(`
-      (async () => {
-        try {
-          const dbs = await indexedDB.databases();
-          console.log("[XK] IndexedDB databases:", dbs);
-          document.body.insertAdjacentHTML("afterbegin",
-            '<pre style="background:#111;color:#0ff;padding:12px;z-index:99999;position:relative">' +
-            JSON.stringify(dbs, null, 2) + "</pre>");
-        } catch(e){ console.error(e); }
-      })();
+    parts.push(`
+      (async()=>{ try {
+        const dbs = await indexedDB.databases();
+        console.log("[XK] IDB:", dbs);
+        document.body.insertAdjacentHTML("afterbegin", '<pre style="background:#111;color:#0ff;padding:12px;z-index:999999;position:relative">'+JSON.stringify(dbs,null,2)+'</pre>');
+      } catch(e){} })();
     `);
   }
-
   if (opts.opfsView) {
-    actions.push(`
-      (async () => {
-        try {
-          if (navigator.storage && navigator.storage.getDirectory) {
-            const root = await navigator.storage.getDirectory();
-            const entries = [];
-            for await (const [name, handle] of root.entries()) {
-              entries.push({ name, kind: handle.kind });
-            }
-            console.log("[XK] OPFS entries:", entries);
-            document.body.insertAdjacentHTML("afterbegin",
-              '<pre style="background:#111;color:#ff0;padding:12px;z-index:99999;position:relative">' +
-              JSON.stringify(entries, null, 2) + "</pre>");
+    parts.push(`
+      (async()=>{ try {
+        if (navigator.storage?.getDirectory) {
+          const root = await navigator.storage.getDirectory();
+          const entries = [];
+          for await (const [name, handle] of root.entries()) entries.push({name, kind: handle.kind});
+          console.log("[XK] OPFS:", entries);
+          document.body.insertAdjacentHTML("afterbegin", '<pre style="background:#111;color:#ff0;padding:12px;z-index:999999;position:relative">'+JSON.stringify(entries,null,2)+'</pre>');
+        }
+      } catch(e){} })();
+    `);
+  }
+
+  // ---- Favicon + Title lock ----
+  const faviconHost = opts.tabFavicon ? resolveFaviconHost(opts.tabFavicon) : null;
+  const lockedTitle = opts.tabTitle ? JSON.stringify(opts.tabTitle) : null;
+
+  if (faviconHost || lockedTitle) {
+    parts.push(`
+      (function(){
+        const lockedTitle = ${lockedTitle};
+        const faviconHost = ${faviconHost ? JSON.stringify(faviconHost) : "null"};
+
+        function setFavicon(href) {
+          let link = document.querySelector("link[rel*='icon']");
+          if (!link) {
+            link = document.createElement("link");
+            link.rel = "icon";
+            document.head.appendChild(link);
           }
-        } catch(e){ console.error(e); }
+          link.href = href;
+        }
+
+        function lockTitle() {
+          if (!lockedTitle) return;
+          if (document.title !== lockedTitle) document.title = lockedTitle;
+        }
+
+        // Initial
+        if (lockedTitle) {
+          document.title = lockedTitle;
+          // Aggressive lock
+          const observer = new MutationObserver(lockTitle);
+          observer.observe(document.querySelector("title") || document.head, { childList: true, characterData: true, subtree: true });
+          setInterval(lockTitle, 800);
+          // Also trap common ways pages change title
+          const desc = Object.getOwnPropertyDescriptor(Document.prototype, "title");
+          if (desc && desc.set) {
+            Object.defineProperty(document, "title", {
+              get() { return lockedTitle; },
+              set() { /* ignore */ },
+              configurable: true
+            });
+          }
+        }
+
+        if (faviconHost) {
+          // Prefer Google's s2 favicon service (reliable) then direct
+          const candidates = [
+            "https://www.google.com/s2/favicons?domain=" + encodeURIComponent(faviconHost.replace(/^https?:\\/\\//,"")) + "&sz=64",
+            faviconHost + "/favicon.ico",
+            faviconHost + "/favicon.png"
+          ];
+          setFavicon(candidates[0]);
+          // Keep it locked
+          setInterval(() => setFavicon(candidates[0]), 1500);
+        }
       })();
     `);
   }
 
-  if (actions.length === 0) return "";
+  // ---- Full Cloak (blob:) ----
+  if (opts.cloak) {
+    parts.push(`
+      (function(){
+        // Only run once
+        if (window.__xkCloaked) return;
+        window.__xkCloaked = true;
 
-  return `<script id="xk-control">
+        const realUrl = location.href;
+
+        // Capture current title + favicon before we leave
+        const currentTitle = document.title || "Loading...";
+        let currentFavicon = "";
+        const iconLink = document.querySelector("link[rel*='icon']");
+        if (iconLink) currentFavicon = iconLink.href;
+
+        // Build the blob page
+        const html = \`<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>\${currentTitle.replace(/</g,"&lt;")}</title>
+\${currentFavicon ? '<link rel="icon" href="'+currentFavicon+'">' : ''}
+<style>
+  html,body{margin:0;padding:0;height:100%;overflow:hidden;background:#000}
+  iframe{border:0;width:100%;height:100%;display:block}
+</style>
+</head>
+<body>
+<iframe id="xkframe" src="\${realUrl}" allow="accelerometer; autoplay; camera; clipboard-read; clipboard-write; encrypted-media; fullscreen; geolocation; gyroscope; microphone; midi; payment; picture-in-picture; sync-xhr; usb; xr-spatial-tracking" allowfullscreen></iframe>
+<script>
 (function(){
-  ${actions.join("\n")}
+  const frame = document.getElementById("xkframe");
+  const lockedTitle = \${JSON.stringify(opts.tabTitle || null)};
+  const faviconHost = \${faviconHost ? JSON.stringify(faviconHost) : "null"};
+
+  function setFav(href){
+    let l = document.querySelector("link[rel*='icon']");
+    if(!l){ l=document.createElement("link"); l.rel="icon"; document.head.appendChild(l); }
+    l.href = href;
+  }
+
+  // Sync title from iframe when possible
+  setInterval(() => {
+    try {
+      if (lockedTitle) {
+        document.title = lockedTitle;
+      } else if (frame.contentDocument && frame.contentDocument.title) {
+        document.title = frame.contentDocument.title;
+      }
+    } catch(e){}
+  }, 600);
+
+  // Keep favicon locked
+  if (faviconHost) {
+    const href = "https://www.google.com/s2/favicons?domain=" + encodeURIComponent(faviconHost.replace(/^https?:\\/\\//,"")) + "&sz=64";
+    setFav(href);
+    setInterval(() => setFav(href), 2000);
+  } else if (currentFavicon) {
+    setInterval(() => setFav(currentFavicon), 2000);
+  }
+
+  // Also lock document.title property
+  if (lockedTitle) {
+    try {
+      Object.defineProperty(document, "title", {
+        get(){ return lockedTitle; },
+        set(){},
+        configurable: true
+      });
+    } catch(e){}
+  }
+})();
+</script>
+</body>
+</html>\`;
+
+        const blob = new Blob([html], { type: "text/html" });
+        const blobUrl = URL.createObjectURL(blob);
+        location.replace(blobUrl);
+      })();
+    `);
+  }
+
+  if (parts.length === 0) return "";
+
+  return `<script id="xk-client-control">
+(function(){
+${parts.join("\n")}
 })();
 </script>`;
 }
 
-function injectControl(html, opts) {
-  const script = buildControlScript(opts);
+function injectClient(html, opts, proxyOrigin) {
+  const script = buildClientScript(opts, proxyOrigin);
   if (!script) return html;
 
   if (/<\/head>/i.test(html)) {
@@ -325,7 +477,6 @@ export default {
     const proxyOrigin = url.origin;
     const xk = parseAllXkParams(url);
 
-    // ---------- CORS preflight ----------
     if (request.method === "OPTIONS") {
       return new Response(null, {
         status: 204,
@@ -338,15 +489,10 @@ export default {
       });
     }
 
-    // ---------- Rate limit + ban ----------
     const guard = await checkBanAndRate(request, env);
     if (guard.blocked) {
       return new Response(
-        JSON.stringify({
-          error: guard.reason,
-          message: guard.message,
-          ipHash: guard.ipHash,
-        }),
+        JSON.stringify({ error: guard.reason, message: guard.message, ipHash: guard.ipHash }),
         {
           status: guard.reason === "banned" ? 403 : 429,
           headers: { "content-type": "application/json", "Retry-After": "60" },
@@ -354,26 +500,24 @@ export default {
       );
     }
 
-    // ---------- ?xk.index → clear sticky and show real homepage ----------
+    // ?xk.index → clear sticky
     if (xk.clearIndex) {
       const headers = new Headers({ "content-type": "text/html; charset=utf-8" });
       clearOriginCookie(headers);
       return new Response(homePage(VERSION), { headers });
     }
 
-    // ---------- Determine target ----------
     let targetUrl = null;
     let isNewSelection = false;
-    let sticky = getOriginFromCookie(request);
+    const sticky = getOriginFromCookie(request);
 
-    // Explicit selection via /:/ or /$/
+    // Explicit /:/ or /$/
     if (path.startsWith("/:/") || path.startsWith("/$/")) {
-      const raw = path.startsWith("/:/") ? path.slice(3) : path.slice(3);
+      const raw = path.slice(3);
       targetUrl = normalizeTarget(raw, xk.forceHttp);
       if (targetUrl) {
         try {
           const u = new URL(targetUrl);
-          // trailing slash preference for directory-like paths
           u.pathname = ensureTrailingSlash(u.pathname);
           for (const [k, v] of xk.cleanParams) u.searchParams.append(k, v);
           targetUrl = u.href;
@@ -382,46 +526,40 @@ export default {
       }
     }
 
-    // Root path + sticky origin → treat as the sticky site's root
+    // Root + sticky → sticky root
     if (!targetUrl && (path === "/" || path === "") && sticky) {
       try {
         const base = new URL(sticky);
         base.pathname = "/";
-        base.search = url.search; // keep any non-xk params
-        // strip xk.* from the search we forward
-        for (const key of [...base.searchParams.keys()]) {
-          if (key.startsWith("xk.")) base.searchParams.delete(key);
-        }
+        base.search = "";
+        for (const [k, v] of xk.cleanParams) base.searchParams.append(k, v);
         targetUrl = base.href;
       } catch {}
     }
 
-    // Normal relative request while sticky is set
+    // Relative + sticky
     if (!targetUrl && sticky) {
       try {
         const base = new URL(sticky);
         let p = path || "/";
-        // Prefer trailing slash on extension-less paths
         p = ensureTrailingSlash(p);
         base.pathname = p;
-        base.search = url.search;
-        for (const key of [...base.searchParams.keys()]) {
-          if (key.startsWith("xk.")) base.searchParams.delete(key);
-        }
+        base.search = "";
+        for (const [k, v] of xk.cleanParams) base.searchParams.append(k, v);
         targetUrl = base.href;
       } catch {
         return new Response("Invalid sticky origin", { status: 400 });
       }
     }
 
-    // No target and no sticky → real homepage
+    // No target → homepage
     if (!targetUrl) {
       return new Response(homePage(VERSION), {
         headers: { "content-type": "text/html; charset=utf-8" },
       });
     }
 
-    // ---------- Fetch upstream ----------
+    // Fetch
     let upstream;
     try {
       const headers = new Headers(request.headers);
@@ -453,7 +591,7 @@ export default {
       });
     }
 
-    // ---------- Redirects ----------
+    // Redirects
     if ([301, 302, 303, 307, 308].includes(upstream.status)) {
       const loc = upstream.headers.get("location");
       if (loc) {
@@ -468,16 +606,11 @@ export default {
       }
     }
 
-    // ---------- Build response ----------
     const responseHeaders = cleanHeaders(upstream.headers, xk.headersMode);
-
-    if (isNewSelection) {
-      setOriginCookie(responseHeaders, targetUrl);
-    }
+    if (isNewSelection) setOriginCookie(responseHeaders, targetUrl);
 
     const contentType = upstream.headers.get("content-type") || "";
 
-    // Binary passthrough
     if (!isText(contentType)) {
       return new Response(upstream.body, {
         status: upstream.status,
@@ -488,9 +621,8 @@ export default {
 
     let body = await upstream.text();
 
-    // Inject control scripts when wipe/view is requested
     if (contentType.includes("html")) {
-      body = injectControl(body, xk);
+      body = injectClient(body, xk, proxyOrigin);
     }
 
     return new Response(body, {
@@ -509,44 +641,49 @@ function homePage(version) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>XK Proxy 2.0 — Apex+</title>
+<title>XK Proxy 2.0 — Apex Cloak</title>
 <style>
 :root{color-scheme:dark}
-body{font-family:system-ui,-apple-system,sans-serif;background:#09090b;color:#e4e4e7;max-width:760px;margin:48px auto;padding:0 20px;line-height:1.65}
+body{font-family:system-ui,-apple-system,sans-serif;background:#09090b;color:#e4e4e7;max-width:780px;margin:48px auto;padding:0 20px;line-height:1.65}
 h1{font-size:1.9rem;margin:0 0 4px}
 .ver{color:#a1a1aa;font-size:.9rem;margin-bottom:28px}
 .box{background:#18181b;border:1px solid #27272a;border-radius:10px;padding:18px 20px;margin:18px 0}
 code{background:#27272a;padding:2px 7px;border-radius:4px;font-size:.88em}
-pre{background:#18181b;padding:14px;border-radius:8px;overflow-x:auto;border:1px solid #27272a}
-a{color:#7dd3fc}
 ul{padding-left:1.3em}
 li{margin:6px 0}
 .badge{display:inline-block;background:#14532d;color:#86efac;font-size:.75rem;padding:2px 8px;border-radius:99px;margin-left:8px}
 </style>
 </head>
 <body>
-<h1>XK Proxy 2.0 <span class="badge">Apex+</span></h1>
+<h1>XK Proxy 2.0 <span class="badge">Apex Cloak</span></h1>
 <div class="ver">v${version}</div>
 
 <div class="box">
-<strong>Quick start</strong><br><br>
+<strong>Basic</strong><br><br>
 <code>/:/duckduckgo.com</code><br>
-<code>/:/https://example.com/path/</code><br>
-<code>/:/y8.com?xk.proxy.http=0</code>
+<code>/:/y8.com?xk.proxy.http=0</code><br>
+<code>?xk.index</code> — clear sticky origin
 </div>
 
 <div class="box">
-<strong>Special commands</strong><br><br>
-<code>?xk.index</code> — clear sticky origin and return here<br>
-<code>?xk.ls.wipe</code> — wipe localStorage + sessionStorage<br>
-<code>?xk.idb.wipe</code> — wipe IndexedDB<br>
-<code>?xk.opfs.wipe</code> — wipe Origin Private File System<br>
-<code>?xk.ls.view</code> / <code>?xk.idb.view</code> / <code>?xk.opfs.view</code> — viewers
+<strong>Tab cloaking</strong><br><br>
+<code>?xk.tab.favicon=Google</code> or <code>clever</code> or <code>google.com</code><br>
+<code>?xk.tab.title=Google Classroom</code><br>
+<code>?xk.cloak=1</code> (or yes / true) — full blob: cloak<br><br>
+Example:<br>
+<code>/:/duckduckgo.com?xk.tab.favicon=Google&xk.tab.title=Google&xk.cloak=1</code>
+</div>
+
+<div class="box">
+<strong>Storage tools</strong><br><br>
+<code>?xk.ls.wipe</code> / <code>?xk.ls.view</code><br>
+<code>?xk.idb.wipe</code> / <code>?xk.idb.view</code><br>
+<code>?xk.opfs.wipe</code> / <code>?xk.opfs.view</code>
 </div>
 
 <p style="color:#71717a;font-size:.88rem;margin-top:36px">
-After you set a site, just visiting the root of this proxy will load that site.
-Use <code>?xk.index</code> any time you want the real homepage back.
+After setting a site, the root of this proxy loads that site.
+Cloak turns the page into a blob: so monitoring extensions cannot see the real URL.
 </p>
 </body>
 </html>`;
