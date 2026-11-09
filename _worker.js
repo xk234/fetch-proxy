@@ -23,7 +23,10 @@
  *   xk.opfs.wipe / xk.opfs.view
  */
 
-const VERSION = "2.0.3-apex";
+const VERSION = "2.0.4-apex";
+
+const HOMEPAGE_HTML = "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n  <meta charset=\"utf-8\" />\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n  <title>XK Proxy 2.0</title>\n  <style>\n    :root { color-scheme: dark; }\n    * { box-sizing: border-box; }\n    body {\n      margin: 0;\n      min-height: 100vh;\n      font-family: system-ui, -apple-system, sans-serif;\n      background: #09090b;\n      color: #e4e4e7;\n      display: flex;\n      flex-direction: column;\n      align-items: center;\n      justify-content: center;\n      padding: 24px;\n    }\n    h1 {\n      font-size: 1.75rem;\n      margin: 0 0 6px;\n      font-weight: 650;\n    }\n    .sub {\n      color: #71717a;\n      font-size: 0.9rem;\n      margin-bottom: 28px;\n    }\n    .search-box {\n      width: min(560px, 100%);\n      display: flex;\n      gap: 8px;\n      margin-bottom: 18px;\n    }\n    .search-box input {\n      flex: 1;\n      padding: 14px 16px;\n      border-radius: 10px;\n      border: 1px solid #27272a;\n      background: #18181b;\n      color: #fafafa;\n      font-size: 1rem;\n      outline: none;\n    }\n    .search-box input:focus {\n      border-color: #3b82f6;\n    }\n    .search-box button {\n      padding: 0 18px;\n      border-radius: 10px;\n      border: 0;\n      background: #2563eb;\n      color: #fff;\n      font-weight: 600;\n      cursor: pointer;\n    }\n    .search-box button:hover { background: #1d4ed8; }\n    .hints {\n      width: min(560px, 100%);\n      color: #a1a1aa;\n      font-size: 0.85rem;\n      line-height: 1.55;\n    }\n    .hints code {\n      background: #27272a;\n      padding: 1px 6px;\n      border-radius: 4px;\n      font-size: 0.8em;\n    }\n    .row {\n      display: flex;\n      flex-wrap: wrap;\n      gap: 8px;\n      margin-top: 14px;\n    }\n    .chip {\n      background: #18181b;\n      border: 1px solid #27272a;\n      padding: 6px 12px;\n      border-radius: 999px;\n      font-size: 0.8rem;\n      color: #d4d4d8;\n      cursor: pointer;\n      text-decoration: none;\n    }\n    .chip:hover { border-color: #3b82f6; color: #fff; }\n  </style>\n</head>\n<body>\n  <h1>XK Proxy 2.0</h1>\n  <div class=\"sub\">Apex \u00b7 sticky origin \u00b7 cloak \u00b7 no-rewrite</div>\n\n  <form class=\"search-box\" id=\"go\" autocomplete=\"off\">\n    <input\n      id=\"q\"\n      type=\"text\"\n      placeholder=\"Search DuckDuckGo or paste a URL\u2026\"\n      autofocus\n    />\n    <button type=\"submit\">Go</button>\n  </form>\n\n  <div class=\"hints\">\n    <div>Examples:</div>\n    <div class=\"row\">\n      <a class=\"chip\" href=\"/:/duckduckgo.com\">DuckDuckGo</a>\n      <a class=\"chip\" href=\"/:/example.com\">example.com</a>\n      <a class=\"chip\" href=\"/:/y8.com?xk.proxy.http=0\">y8 (HTTP)</a>\n      <a class=\"chip\" href=\"/:/duckduckgo.com?xk.tab.favicon=Google&xk.tab.title=Google&xk.cloak=1\">Cloaked DDG</a>\n    </div>\n    <p style=\"margin-top:18px\">\n      <code>/:/site</code> \u2014 normal sticky proxy<br>\n      <code>/:n/site</code> \u2014 no-rewrite (raw fetch, no sticky)<br>\n      <code>?xk.index</code> \u2014 clear sticky origin<br>\n      <code>?xk.cloak=1</code> \u00b7 <code>?xk.tab.title=\u2026</code> \u00b7 <code>?xk.tab.favicon=Google</code><br>\n      <code>?xk.allowjs=0</code> \u2014 disable JavaScript on the page\n    </p>\n  </div>\n\n  <script>\n    (function () {\n      var form = document.getElementById(\"go\");\n      var input = document.getElementById(\"q\");\n\n      function isProbablyUrl(text) {\n        text = text.trim();\n        if (/^https?:\\/\\//i.test(text)) return true;\n        if (/^[a-z0-9.-]+\\.[a-z]{2,}([\\/:?#]|$)/i.test(text)) return true;\n        return false;\n      }\n\n      form.addEventListener(\"submit\", function (e) {\n        e.preventDefault();\n        var q = (input.value || \"\").trim();\n        if (!q) return;\n\n        if (isProbablyUrl(q)) {\n          // Strip protocol for cleaner path; proxy will default to https\n          var target = q.replace(/^https?:\\/\\//i, \"\");\n          location.href = \"/:/\" + target;\n        } else {\n          // DuckDuckGo search through the proxy\n          location.href = \"/:/duckduckgo.com/?q=\" + encodeURIComponent(q);\n        }\n      });\n    })();\n  </script>\n</body>\n</html>\n";
+
 
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const RATE_LIMIT_MAX = 100;
@@ -298,8 +301,20 @@ export default {
 
     // Static: /xk/public/* and /xk/lib/* never proxied
     if (path.startsWith("/xk/public/") || path.startsWith("/xk/lib/") || path === "/xk/public" || path === "/xk/lib") {
-      if (env.ASSETS) return env.ASSETS.fetch(request);
-      return fetch(request);
+      if (env.ASSETS) {
+        try {
+          const res = await env.ASSETS.fetch(request);
+          if (res.status !== 404) return res;
+        } catch {}
+      }
+      // Fallback: serve embedded homepage for index paths
+      if (path === "/xk/public/index.html" || path === "/xk/public/" || path === "/xk/public") {
+        return new Response(HOMEPAGE_HTML, {
+          status: 200,
+          headers: { "content-type": "text/html; charset=utf-8", Server: "xk" },
+        });
+      }
+      return new Response("Not found", { status: 404, headers: { Server: "xk" } });
     }
 
     const guard = await checkBanAndRate(request, env);
@@ -311,14 +326,9 @@ export default {
     }
 
     if (xk.clearIndex) {
-      const headers = new Headers({ "content-type": "text/html; charset=utf-8", Server: "xk" });
+      const headers = new Headers({ "content-type": "text/html; charset=utf-8", Server: "xk", "Cache-Control": "no-store" });
       clearOriginCookie(headers);
-      try {
-        const homeReq = new Request(new URL("/xk/public/index.html", proxyOrigin), request);
-        const home = env.ASSETS ? await env.ASSETS.fetch(homeReq) : await fetch(homeReq);
-        if (home.ok) return new Response(await home.text(), { status: 200, headers });
-      } catch {}
-      return new Response("Homepage missing. Deploy xk/public/index.html", { status: 500, headers });
+      return new Response(HOMEPAGE_HTML, { status: 200, headers });
     }
 
     let mode = null;
@@ -376,17 +386,10 @@ export default {
     }
 
     if (!targetUrl) {
-      try {
-        const homeReq = new Request(new URL("/xk/public/index.html", proxyOrigin), request);
-        const home = env.ASSETS ? await env.ASSETS.fetch(homeReq) : await fetch(homeReq);
-        if (home.ok) {
-          return new Response(await home.text(), {
-            status: 200,
-            headers: { "content-type": "text/html; charset=utf-8", Server: "xk", "Cache-Control": "no-store" },
-          });
-        }
-      } catch {}
-      return new Response("Homepage missing (xk/public/index.html)", { status: 500, headers: { Server: "xk" } });
+      return new Response(HOMEPAGE_HTML, {
+        status: 200,
+        headers: { "content-type": "text/html; charset=utf-8", Server: "xk", "Cache-Control": "no-store" },
+      });
     }
 
     let upstream;
