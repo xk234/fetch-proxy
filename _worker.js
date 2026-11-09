@@ -1,29 +1,35 @@
 
 /**
- * XK Cloudflare Pages Proxy 2.0 — Apex+ Cloak
- * -------------------------------------------------------
- * Sticky-origin proxy + advanced tab cloaking system
+ * XK Cloudflare Pages Proxy 2.0 — Apex Cloak
+ * ------------------------------------------
+ * Sticky-origin proxy with cloaking, no-rewrite mode, IP hiding,
+ * and static asset passthrough for /xk/public and /xk/lib.
  *
- * New:
- *  ?xk.tab.favicon=Google|clever|google.com|...
- *  ?xk.tab.title=Whatever
- *  ?xk.cloak=1|0|yes|no|true|false
+ * Endpoints:
+ *   /:/target          sticky proxy (sets hostname cookie)
+ *   /:n/target         no-rewrite, no sticky
+ *   /$/target          legacy alias of /:/
  *
- * Cloak creates a blob: page with matching title/favicon,
- * embeds the current proxied page in a fully-permissioned iframe,
- * actively syncs title + favicon, and uses location.replace
- * so the omnibox only shows blob:...
- * (monitoring extensions like Blocksi / GoGuardian cannot see blob: pages)
+ * Control params (all endpoints):
+ *   xk.proxy.http=0|1
+ *   xk.proxy.headers=iframe|zero
+ *   xk.index           clear sticky, show homepage
+ *   xk.tab.favicon=Google|clever|google.com|...
+ *   xk.tab.title=...
+ *   xk.cloak=1|yes|true
+ *   xk.allowjs=0|no|false   (strip/disable JS)
+ *   xk.ls.wipe / xk.ls.view
+ *   xk.idb.wipe / xk.idb.view
+ *   xk.opfs.wipe / xk.opfs.view
  */
 
-const VERSION = "2.0.2-apex-cloak";
+const VERSION = "2.0.3-apex";
 
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const RATE_LIMIT_MAX = 100;
 const COOKIE_ORIGIN = "xk_origin";
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 7;
 
-// Common shortcuts for favicon
 const FAVICON_SHORTCUTS = {
   google: "https://www.google.com",
   clever: "https://clever.com",
@@ -43,7 +49,15 @@ const FAVICON_SHORTCUTS = {
   bing: "https://www.bing.com",
 };
 
-// ====================== HELPERS ======================
+const STRIP_RESPONSE_HEADERS = [
+  "cf-ray", "cf-cache-status", "cf-request-id", "cf-ipcountry",
+  "server", "x-powered-by", "via", "x-served-by", "x-cache", "x-cache-hits",
+  "x-timer", "x-edge-location", "x-request-id", "report-to", "nel",
+  "content-security-policy", "content-security-policy-report-only",
+  "x-frame-options", "x-content-type-options", "strict-transport-security",
+  "cross-origin-opener-policy", "cross-origin-embedder-policy",
+  "cross-origin-resource-policy", "permissions-policy",
+];
 
 function getClientIP(request) {
   return (
@@ -56,10 +70,7 @@ function getClientIP(request) {
 async function hashIP(ip) {
   const data = new TextEncoder().encode(ip + "|xk-proxy-salt-v2");
   const buf = await crypto.subtle.digest("SHA-256", data);
-  return [...new Uint8Array(buf)]
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("")
-    .slice(0, 24);
+  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 24);
 }
 
 function truthy(val) {
@@ -68,84 +79,104 @@ function truthy(val) {
   return v === "1" || v === "true" || v === "yes" || v === "on";
 }
 
-function parseAllXkParams(url) {
-  const params = url.searchParams;
-  const result = {
+function falsy(val) {
+  if (val == null) return false;
+  const v = String(val).toLowerCase().trim();
+  return v === "0" || v === "false" || v === "no" || v === "off";
+}
+
+function parseXk(url) {
+  const p = url.searchParams;
+  const o = {
     forceHttp: null,
     headersMode: "iframe",
-    clearIndex: params.has("xk.index"),
-    lsWipe: params.has("xk.ls.wipe"),
-    lsView: params.has("xk.ls.view"),
-    idbWipe: params.has("xk.idb.wipe"),
-    idbView: params.has("xk.idb.view"),
-    opfsWipe: params.has("xk.opfs.wipe"),
-    opfsView: params.has("xk.opfs.view"),
-    tabFavicon: params.get("xk.tab.favicon") || null,
-    tabTitle: params.get("xk.tab.title") || null,
-    cloak: truthy(params.get("xk.cloak")),
+    clearIndex: p.has("xk.index"),
+    lsWipe: p.has("xk.ls.wipe"),
+    lsView: p.has("xk.ls.view"),
+    idbWipe: p.has("xk.idb.wipe"),
+    idbView: p.has("xk.idb.view"),
+    opfsWipe: p.has("xk.opfs.wipe"),
+    opfsView: p.has("xk.opfs.view"),
+    tabFavicon: p.get("xk.tab.favicon"),
+    tabTitle: p.get("xk.tab.title"),
+    cloak: truthy(p.get("xk.cloak")),
+    allowJs: true,
   };
-
-  if (params.has("xk.proxy.http")) {
-    const v = params.get("xk.proxy.http");
-    if (v === "0") result.forceHttp = 0;
-    if (v === "1") result.forceHttp = 1;
+  if (p.has("xk.allowjs")) {
+    const v = p.get("xk.allowjs");
+    if (falsy(v)) o.allowJs = false;
+    if (truthy(v)) o.allowJs = true;
   }
-  if (params.has("xk.proxy.headers")) {
-    result.headersMode = params.get("xk.proxy.headers") || "iframe";
+  if (p.has("xk.proxy.http")) {
+    const v = p.get("xk.proxy.http");
+    if (v === "0") o.forceHttp = 0;
+    if (v === "1") o.forceHttp = 1;
   }
+  if (p.has("xk.proxy.headers")) o.headersMode = p.get("xk.proxy.headers") || "iframe";
 
   const clean = new URLSearchParams();
-  for (const [k, v] of params.entries()) {
-    if (!k.startsWith("xk.")) clean.append(k, v);
-  }
-  result.cleanParams = clean;
-  return result;
+  for (const [k, v] of p.entries()) if (!k.startsWith("xk.")) clean.append(k, v);
+  o.cleanParams = clean;
+  return o;
 }
 
 function normalizeTarget(raw, forceHttp) {
   if (!raw) return null;
   let t = raw.trim();
-  try {
-    if (t.includes("%")) t = decodeURIComponent(t);
-  } catch {}
-
+  try { if (t.includes("%")) t = decodeURIComponent(t); } catch {}
   if (/^https?:\/\//i.test(t)) {
     if (forceHttp === 0) t = t.replace(/^https:\/\//i, "http://");
     else if (forceHttp === 1) t = t.replace(/^http:\/\//i, "https://");
     return t;
   }
-  const proto = forceHttp === 0 ? "http://" : "https://";
-  return proto + t.replace(/^\/+/, "");
+  return (forceHttp === 0 ? "http://" : "https://") + t.replace(/^\/+/, "");
 }
 
 function isText(ct) {
   if (!ct) return false;
   ct = ct.toLowerCase();
-  return (
-    ct.includes("text/") ||
-    ct.includes("javascript") ||
-    ct.includes("json") ||
-    ct.includes("xml") ||
-    ct.includes("svg") ||
-    ct.includes("xhtml")
-  );
+  return ct.includes("text/") || ct.includes("javascript") || ct.includes("json") ||
+    ct.includes("xml") || ct.includes("svg") || ct.includes("xhtml");
 }
 
-function cleanHeaders(headers, mode = "iframe") {
-  const h = new Headers(headers);
-  [
-    "content-security-policy",
-    "content-security-policy-report-only",
-    "x-frame-options",
-    "x-content-type-options",
-    "strict-transport-security",
-    "cross-origin-opener-policy",
-    "cross-origin-embedder-policy",
-    "cross-origin-resource-policy",
-    "permissions-policy",
-    "report-to",
-  ].forEach((k) => h.delete(k));
+function resolveFaviconHost(value) {
+  if (!value) return null;
+  const key = value.toLowerCase().trim();
+  if (FAVICON_SHORTCUTS[key]) return FAVICON_SHORTCUTS[key];
+  if (key.includes(".") || key.startsWith("http")) {
+    try {
+      const u = key.startsWith("http") ? new URL(key) : new URL("https://" + key);
+      return u.origin;
+    } catch { return null; }
+  }
+  return null;
+}
 
+function ensureTrailingSlash(pathname) {
+  if (pathname === "/" || pathname.endsWith("/")) return pathname;
+  const last = pathname.split("/").pop() || "";
+  if (!last.includes(".")) return pathname + "/";
+  return pathname;
+}
+
+function setOriginCookie(headers, origin) {
+  headers.append("Set-Cookie", COOKIE_ORIGIN + "=" + encodeURIComponent(origin) + "; Path=/; Max-Age=" + COOKIE_MAX_AGE + "; Secure; SameSite=Lax");
+}
+function clearOriginCookie(headers) {
+  headers.append("Set-Cookie", COOKIE_ORIGIN + "=; Path=/; Max-Age=0; Secure; SameSite=Lax");
+}
+function getOriginFromCookie(request) {
+  const cookies = request.headers.get("Cookie") || "";
+  const m = cookies.match(new RegExp("(?:^|;\\s*)" + COOKIE_ORIGIN + "=([^;]+)"));
+  if (!m) return null;
+  try { return decodeURIComponent(m[1]); } catch { return null; }
+}
+
+function cleanResponseHeaders(upstreamHeaders, mode) {
+  const h = new Headers(upstreamHeaders);
+  for (const k of STRIP_RESPONSE_HEADERS) h.delete(k);
+  h.delete("server");
+  h.set("Server", "xk");
   if (mode === "iframe" || mode === "zero") {
     h.set("Access-Control-Allow-Origin", "*");
     h.set("Access-Control-Allow-Methods", "GET,HEAD,POST,PUT,DELETE,OPTIONS,PATCH");
@@ -156,211 +187,102 @@ function cleanHeaders(headers, mode = "iframe") {
   return h;
 }
 
-function setOriginCookie(headers, origin) {
-  headers.append(
-    "Set-Cookie",
-    `${COOKIE_ORIGIN}=${encodeURIComponent(origin)}; Path=/; Max-Age=${COOKIE_MAX_AGE}; Secure; SameSite=Lax`
-  );
-}
-
-function clearOriginCookie(headers) {
-  headers.append(
-    "Set-Cookie",
-    `${COOKIE_ORIGIN}=; Path=/; Max-Age=0; Secure; SameSite=Lax`
-  );
-}
-
-function getOriginFromCookie(request) {
-  const cookies = request.headers.get("Cookie") || "";
-  const match = cookies.match(new RegExp(`(?:^|;\\s*)${COOKIE_ORIGIN}=([^;]+)`));
-  if (!match) return null;
-  try {
-    return decodeURIComponent(match[1]);
-  } catch {
-    return null;
-  }
-}
-
-function ensureTrailingSlash(pathname) {
-  if (pathname === "/" || pathname.endsWith("/")) return pathname;
-  const last = pathname.split("/").pop() || "";
-  if (!last.includes(".")) return pathname + "/";
-  return pathname;
-}
-
-function resolveFaviconHost(value) {
-  if (!value) return null;
-  const key = value.toLowerCase().trim();
-  if (FAVICON_SHORTCUTS[key]) return FAVICON_SHORTCUTS[key];
-  // treat as hostname
-  if (key.includes(".") || key.startsWith("http")) {
-    try {
-      const u = key.startsWith("http") ? new URL(key) : new URL("https://" + key);
-      return u.origin;
-    } catch {
-      return null;
-    }
-  }
-  return null;
-}
-
-// ====================== RATE LIMIT + BAN ======================
-
 async function checkBanAndRate(request, env) {
   const ip = getClientIP(request);
   const ipHash = await hashIP(ip);
-
   if (env.BANS) {
-    const banned = await env.BANS.get(`ban:${ipHash}`);
-    if (banned) {
-      return {
-        blocked: true,
-        reason: "banned",
-        message: "This device has been banned from the proxy.",
-        ipHash,
-      };
-    }
+    const banned = await env.BANS.get("ban:" + ipHash);
+    if (banned) return { blocked: true, reason: "banned", message: "Device banned.", ipHash };
   }
-
   if (env.RATE_LIMIT) {
-    const key = `rl:${ipHash}:${Math.floor(Date.now() / RATE_LIMIT_WINDOW_MS)}`;
+    const key = "rl:" + ipHash + ":" + Math.floor(Date.now() / RATE_LIMIT_WINDOW_MS);
     let count = parseInt((await env.RATE_LIMIT.get(key)) || "0", 10);
-    if (count >= RATE_LIMIT_MAX) {
-      return {
-        blocked: true,
-        reason: "rate",
-        message: `Rate limit exceeded (${RATE_LIMIT_MAX} req/min).`,
-        ipHash,
-      };
-    }
+    if (count >= RATE_LIMIT_MAX) return { blocked: true, reason: "rate", message: "Rate limit (" + RATE_LIMIT_MAX + "/min).", ipHash };
     await env.RATE_LIMIT.put(key, String(count + 1), { expirationTtl: 120 });
   }
-
   return { blocked: false, ipHash };
 }
 
-// ====================== CLIENT CONTROL + CLOAK SCRIPT ======================
+function buildClientScript(opts) {
+  const chunks = [];
 
-function buildClientScript(opts, proxyOrigin) {
-  const parts = [];
+  if (opts.lsWipe) chunks.push('try{localStorage.clear();sessionStorage.clear();}catch(e){}');
+  if (opts.idbWipe) chunks.push('(async function(){try{var d=await indexedDB.databases();for(var i=0;i<d.length;i++)if(d[i].name)indexedDB.deleteDatabase(d[i].name);}catch(e){}})();');
+  if (opts.opfsWipe) chunks.push('(async function(){try{if(navigator.storage&&navigator.storage.getDirectory){var r=await navigator.storage.getDirectory();for await(var e of r.entries())await r.removeEntry(e[0],{recursive:true});}}catch(e){}})();');
+  if (opts.lsView) chunks.push('try{var d={};for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);d[k]=localStorage.getItem(k);}document.body.insertAdjacentHTML("afterbegin","\\u003cpre style=\\"background:#111;color:#0f0;padding:12px;z-index:999999;position:relative;max-height:40vh;overflow:auto\\"\\u003e"+JSON.stringify(d,null,2)+"\\u003c/pre\\u003e");}catch(e){}');
+  if (opts.idbView) chunks.push('(async function(){try{var d=await indexedDB.databases();document.body.insertAdjacentHTML("afterbegin","\\u003cpre style=\\"background:#111;color:#0ff;padding:12px;z-index:999999;position:relative\\"\\u003e"+JSON.stringify(d,null,2)+"\\u003c/pre\\u003e");}catch(e){}})();');
+  if (opts.opfsView) chunks.push('(async function(){try{if(navigator.storage&&navigator.storage.getDirectory){var r=await navigator.storage.getDirectory();var a=[];for await(var e of r.entries())a.push({name:e[0],kind:e[1].kind});document.body.insertAdjacentHTML("afterbegin","\\u003cpre style=\\"background:#111;color:#ff0;padding:12px;z-index:999999;position:relative\\"\\u003e"+JSON.stringify(a,null,2)+"\\u003c/pre\\u003e");}}catch(e){}})();');
 
-  // ---- Storage tools ----
-  if (opts.lsWipe) {
-    parts.push('try{localStorage.clear();sessionStorage.clear();console.log("[XK] localStorage wiped");}catch(e){}');
-  }
-  if (opts.idbWipe) {
-    parts.push('(async function(){try{var dbs=await indexedDB.databases();for(var i=0;i<dbs.length;i++){if(dbs[i].name)indexedDB.deleteDatabase(dbs[i].name);}console.log("[XK] IndexedDB wiped");}catch(e){}})();');
-  }
-  if (opts.opfsWipe) {
-    parts.push('(async function(){try{if(navigator.storage&&navigator.storage.getDirectory){var root=await navigator.storage.getDirectory();for await(var entry of root.entries()){await root.removeEntry(entry[0],{recursive:true});}console.log("[XK] OPFS wiped");}}catch(e){}})();');
-  }
-  if (opts.lsView) {
-    parts.push('try{var data={};for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);data[k]=localStorage.getItem(k);}console.log("[XK] localStorage:",data);document.body.insertAdjacentHTML("afterbegin","\\u003cpre style=\\"background:#111;color:#0f0;padding:12px;z-index:999999;position:relative;max-height:40vh;overflow:auto\\"\\u003e"+JSON.stringify(data,null,2)+"\\u003c/pre\\u003e");}catch(e){}');
-  }
-  if (opts.idbView) {
-    parts.push('(async function(){try{var dbs=await indexedDB.databases();console.log("[XK] IDB:",dbs);document.body.insertAdjacentHTML("afterbegin","\\u003cpre style=\\"background:#111;color:#0ff;padding:12px;z-index:999999;position:relative\\"\\u003e"+JSON.stringify(dbs,null,2)+"\\u003c/pre\\u003e");}catch(e){}})();');
-  }
-  if (opts.opfsView) {
-    parts.push('(async function(){try{if(navigator.storage&&navigator.storage.getDirectory){var root=await navigator.storage.getDirectory();var entries=[];for await(var entry of root.entries()){entries.push({name:entry[0],kind:entry[1].kind});}console.log("[XK] OPFS:",entries);document.body.insertAdjacentHTML("afterbegin","\\u003cpre style=\\"background:#111;color:#ff0;padding:12px;z-index:999999;position:relative\\"\\u003e"+JSON.stringify(entries,null,2)+"\\u003c/pre\\u003e");}}catch(e){}})();');
+  if (opts.allowJs === false) {
+    chunks.push('(function(){try{document.addEventListener("DOMContentLoaded",function(){var n=document.querySelectorAll("script");for(var i=0;i<n.length;i++)n[i].remove();},true);}catch(e){}})();');
   }
 
-  // ---- Favicon + Title lock ----
-  const faviconHost = opts.tabFavicon ? resolveFaviconHost(opts.tabFavicon) : null;
-  const lockedTitleJS = opts.tabTitle ? JSON.stringify(opts.tabTitle) : "null";
-  const faviconHostJS = faviconHost ? JSON.stringify(faviconHost) : "null";
-
-  if (faviconHost || opts.tabTitle) {
-    parts.push(
-      '(function(){' +
-      'var lockedTitle=' + lockedTitleJS + ';' +
-      'var faviconHost=' + faviconHostJS + ';' +
-      'function setFavicon(href){var link=document.querySelector("link[rel*=\'icon\']");if(!link){link=document.createElement("link");link.rel="icon";document.head.appendChild(link);}link.href=href;}' +
-      'function lockTitle(){if(!lockedTitle)return;if(document.title!==lockedTitle)document.title=lockedTitle;}' +
-      'if(lockedTitle){document.title=lockedTitle;try{var observer=new MutationObserver(lockTitle);var t=document.querySelector("title");if(t)observer.observe(t,{childList:true,characterData:true,subtree:true});}catch(e){}setInterval(lockTitle,800);try{Object.defineProperty(document,"title",{get:function(){return lockedTitle;},set:function(){},configurable:true});}catch(e){}}' +
-      'if(faviconHost){var href="https://www.google.com/s2/favicons?domain="+encodeURIComponent(faviconHost.replace(/^https?:\\/\\//,""))+"&sz=64";setFavicon(href);setInterval(function(){setFavicon(href);},1500);}' +
+  const favHost = opts.tabFavicon ? resolveFaviconHost(opts.tabFavicon) : null;
+  if (opts.tabTitle || favHost) {
+    const titleJS = opts.tabTitle ? JSON.stringify(opts.tabTitle) : "null";
+    const favJS = favHost ? JSON.stringify(favHost) : "null";
+    chunks.push(
+      '(function(){var T=' + titleJS + ',F=' + favJS + ';' +
+      'function setFav(h){var l=document.querySelector("link[rel*=\'icon\']");if(!l){l=document.createElement("link");l.rel="icon";document.head.appendChild(l);}l.href=h;}' +
+      'if(T){document.title=T;try{Object.defineProperty(document,"title",{get:function(){return T;},set:function(){},configurable:true});}catch(e){}setInterval(function(){if(document.title!==T)document.title=T;},500);}' +
+      'if(F){var u="https://www.google.com/s2/favicons?domain="+encodeURIComponent(F.replace(/^https?:\\/\\//,""))+"&sz=64";setFav(u);setInterval(function(){setFav(u);},1200);}' +
       '})();'
     );
   }
 
-  // ---- Full Cloak (blob:) ----
   if (opts.cloak) {
-    // Everything that will become the blob HTML is built with \u003c / \u003e
-    // so the outer HTML parser never sees a real </script>
-    parts.push(
+    const titleJS = opts.tabTitle ? JSON.stringify(opts.tabTitle) : "null";
+    const favJS = favHost ? JSON.stringify(favHost) : "null";
+    chunks.push(
       '(function(){' +
-      'if(window.__xkCloaked)return;' +
-      'window.__xkCloaked=true;' +
-      'var realUrl=location.href;' +
-      'var currentTitle=document.title||"Loading...";' +
-      'var currentFavicon="";' +
-      'var iconLink=document.querySelector("link[rel*=\'icon\']");' +
-      'if(iconLink)currentFavicon=iconLink.href;' +
-      'var lockedTitle=' + lockedTitleJS + ';' +
-      'var faviconHost=' + faviconHostJS + ';' +
-
-      // Build the blob HTML string using only unicode escapes for tags
-      'var html="";' +
-      'html+="\\u003c!DOCTYPE html\\u003e";' +
-      'html+="\\u003chtml\\u003e\\u003chead\\u003e";' +
-      'html+="\\u003cmeta charset=\\"utf-8\\"\\u003e";' +
-      'html+="\\u003cmeta name=\\"viewport\\" content=\\"width=device-width,initial-scale=1\\"\\u003e";' +
-      'html+="\\u003ctitle\\u003e"+currentTitle.replace(/</g,"&lt;")+"\\u003c/title\\u003e";' +
-      'if(currentFavicon){html+="\\u003clink rel=\\"icon\\" href=\\""+currentFavicon+"\\"\\u003e";}' +
-      'html+="\\u003cstyle\\u003ehtml,body{margin:0;padding:0;height:100%;overflow:hidden;background:#000}iframe{border:0;width:100%;height:100%;display:block}\\u003c/style\\u003e";' +
-      'html+="\\u003c/head\\u003e\\u003cbody\\u003e";' +
-      'html+="\\u003ciframe id=\\"xkframe\\" src=\\""+realUrl+"\\" allow=\\"accelerometer; autoplay; camera; clipboard-read; clipboard-write; encrypted-media; fullscreen; geolocation; gyroscope; microphone; midi; payment; picture-in-picture; sync-xhr; usb; xr-spatial-tracking\\" allowfullscreen\\u003e\\u003c/iframe\\u003e";' +
-
-      // Inner script of the blob page (also unicode-escaped)
-      'html+="\\u003cscript\\u003e";' +
-      'html+="(function(){";' +
-      'html+="var frame=document.getElementById(\'xkframe\');";' +
-      'html+="var lockedTitle="+JSON.stringify(opts.tabTitle||null)+";";' +
-      'html+="var faviconHost="+JSON.stringify(faviconHost)+";";' +
-      'html+="function setFav(href){var l=document.querySelector(\'link[rel*=\\\\\'icon\\\\\']\');if(!l){l=document.createElement(\'link\');l.rel=\'icon\';document.head.appendChild(l);}l.href=href;}";' +
-      'html+="setInterval(function(){try{if(lockedTitle){document.title=lockedTitle;}else if(frame.contentDocument&&frame.contentDocument.title){document.title=frame.contentDocument.title;}}catch(e){}},600);";' +
-      'html+="if(faviconHost){var href=\'https://www.google.com/s2/favicons?domain=\'+encodeURIComponent(faviconHost.replace(/^https?:\\\\/\\\\//,\'\'))+\'&sz=64\';setFav(href);setInterval(function(){setFav(href);},2000);}";' +
-      'html+="var __xkFav=\""+String(currentFavicon).replace(/\\/g,"\\\\").replace(/"/g,"\\\"")+"\";";' +
-      'html+="if(__xkFav){setInterval(function(){setFav(__xkFav);},2000);}";' +
-      'html+="if(lockedTitle){try{Object.defineProperty(document,\'title\',{get:function(){return lockedTitle;},set:function(){},configurable:true});}catch(e){}}";' +
-      'html+="})();";' +
-      'html+="\\u003c/script\\u003e";' +
-      'html+="\\u003c/body\\u003e\\u003c/html\\u003e";' +
-
-      'var blob=new Blob([html],{type:"text/html"});' +
-      'var blobUrl=URL.createObjectURL(blob);' +
-      'location.replace(blobUrl);' +
+      'if(window.__xkC)return;window.__xkC=1;' +
+      'var real=location.href,title=document.title||"...",fav="";' +
+      'var il=document.querySelector("link[rel*=\'icon\']");if(il)fav=il.href;' +
+      'var h="";' +
+      'h+="\\u003c!DOCTYPE html\\u003e\\u003chtml\\u003e\\u003chead\\u003e";' +
+      'h+="\\u003cmeta charset=\\"utf-8\\"\\u003e\\u003cmeta name=\\"viewport\\" content=\\"width=device-width,initial-scale=1\\"\\u003e";' +
+      'h+="\\u003ctitle\\u003e"+String(title).replace(/</g,"&lt;")+"\\u003c/title\\u003e";' +
+      'if(fav)h+="\\u003clink rel=\\"icon\\" href=\\""+fav+"\\"\\u003e";' +
+      'h+="\\u003cstyle\\u003ehtml,body{margin:0;height:100%;overflow:hidden;background:#000}iframe{border:0;width:100%;height:100%;display:block}\\u003c/style\\u003e";' +
+      'h+="\\u003c/head\\u003e\\u003cbody\\u003e";' +
+      'h+="\\u003ciframe id=\\"f\\" src=\\""+real+"\\" allow=\\"accelerometer;autoplay;camera;clipboard-read;clipboard-write;encrypted-media;fullscreen;geolocation;gyroscope;microphone;midi;payment;picture-in-picture;sync-xhr;usb;xr-spatial-tracking\\" allowfullscreen\\u003e\\u003c/iframe\\u003e";' +
+      'h+="\\u003cscript\\u003e";' +
+      'h+="(function(){var f=document.getElementById(\'f\'),LT=' + titleJS + ',FH=' + favJS + ';" ;' +
+      'h+="function sf(u){var l=document.querySelector(\'link[rel*=\\\\\'icon\\\\\']\');if(!l){l=document.createElement(\'link\');l.rel=\'icon\';document.head.appendChild(l);}l.href=u;}";' +
+      'h+="setInterval(function(){try{if(LT)document.title=LT;else if(f.contentDocument&&f.contentDocument.title)document.title=f.contentDocument.title;}catch(e){}},600);";' +
+      'h+="if(FH){var u=\'https://www.google.com/s2/favicons?domain=\'+encodeURIComponent(String(FH).replace(/^https?:\\\\/\\\\//,\'\'))+\'&sz=64\';sf(u);setInterval(function(){sf(u);},2000);}";' +
+      'h+="if(LT){try{Object.defineProperty(document,\'title\',{get:function(){return LT;},set:function(){},configurable:true});}catch(e){}}";' +
+      'h+="})();\\u003c/script\\u003e\\u003c/body\\u003e\\u003c/html\\u003e";' +
+      'location.replace(URL.createObjectURL(new Blob([h],{type:"text/html"})));' +
       '})();'
     );
   }
 
-  if (parts.length === 0) return "";
-
-  // Outer script tag – real tags, but any accidental </script inside the body
-  // is already avoided because we never emit a literal </script in the JS strings.
-  return '<script id="xk-client-control">\\n(function(){\\n' + parts.join('\\n') + '\\n})();\\n</script>';
+  if (!chunks.length) return "";
+  return '<script id="xk-ctrl">\n(function(){\n' + chunks.join("\n") + "\n})();\n</script>";
 }
 
-function injectClient(html, opts, proxyOrigin) {
-  const script = buildClientScript(opts, proxyOrigin);
+function injectClient(html, opts) {
+  const script = buildClientScript(opts);
   if (!script) return html;
-
-  if (/<\/head>/i.test(html)) {
-    return html.replace(/<\/head>/i, script + "</head>");
-  }
-  if (/<\/body>/i.test(html)) {
-    return html.replace(/<\/body>/i, script + "</body>");
-  }
+  if (/<\/head>/i.test(html)) return html.replace(/<\/head>/i, script + "</head>");
+  if (/<\/body>/i.test(html)) return html.replace(/<\/body>/i, script + "</body>");
   return html + script;
 }
 
-// ====================== MAIN ======================
+function stripScripts(html) {
+  return html
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "")
+    .replace(/<script\b[^>]*\/>/gi, "")
+    .replace(/\son\w+\s*=\s*(['"]).*?\1/gi, "");
+}
 
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     let path = url.pathname;
     const proxyOrigin = url.origin;
-    const xk = parseAllXkParams(url);
+    const xk = parseXk(url);
 
     if (request.method === "OPTIONS") {
       return new Response(null, {
@@ -374,44 +296,59 @@ export default {
       });
     }
 
-    const guard = await checkBanAndRate(request, env);
-    if (guard.blocked) {
-      return new Response(
-        JSON.stringify({ error: guard.reason, message: guard.message, ipHash: guard.ipHash }),
-        {
-          status: guard.reason === "banned" ? 403 : 429,
-          headers: { "content-type": "application/json", "Retry-After": "60" },
-        }
-      );
+    // Static: /xk/public/* and /xk/lib/* never proxied
+    if (path.startsWith("/xk/public/") || path.startsWith("/xk/lib/") || path === "/xk/public" || path === "/xk/lib") {
+      if (env.ASSETS) return env.ASSETS.fetch(request);
+      return fetch(request);
     }
 
-    // ?xk.index → clear sticky
+    const guard = await checkBanAndRate(request, env);
+    if (guard.blocked) {
+      return new Response(JSON.stringify({ error: guard.reason, message: guard.message, ipHash: guard.ipHash }), {
+        status: guard.reason === "banned" ? 403 : 429,
+        headers: { "content-type": "application/json", "Retry-After": "60", Server: "xk" },
+      });
+    }
+
     if (xk.clearIndex) {
-      const headers = new Headers({ "content-type": "text/html; charset=utf-8" });
+      const headers = new Headers({ "content-type": "text/html; charset=utf-8", Server: "xk" });
       clearOriginCookie(headers);
-      return new Response(homePage(VERSION), { headers });
+      try {
+        const homeReq = new Request(new URL("/xk/public/index.html", proxyOrigin), request);
+        const home = env.ASSETS ? await env.ASSETS.fetch(homeReq) : await fetch(homeReq);
+        if (home.ok) return new Response(await home.text(), { status: 200, headers });
+      } catch {}
+      return new Response("Homepage missing. Deploy xk/public/index.html", { status: 500, headers });
+    }
+
+    let mode = null;
+    let rawTarget = null;
+
+    if (path.startsWith("/:/") || path.startsWith("/$/")) {
+      mode = "sticky";
+      rawTarget = path.slice(3);
+    } else if (path.startsWith("/:n/")) {
+      mode = "norewrite";
+      rawTarget = path.slice(4);
     }
 
     let targetUrl = null;
     let isNewSelection = false;
     const sticky = getOriginFromCookie(request);
 
-    // Explicit /:/ or /$/
-    if (path.startsWith("/:/") || path.startsWith("/$/")) {
-      const raw = path.slice(3);
-      targetUrl = normalizeTarget(raw, xk.forceHttp);
+    if (mode && rawTarget) {
+      targetUrl = normalizeTarget(rawTarget, xk.forceHttp);
       if (targetUrl) {
         try {
           const u = new URL(targetUrl);
-          u.pathname = ensureTrailingSlash(u.pathname);
+          if (mode === "sticky") u.pathname = ensureTrailingSlash(u.pathname);
           for (const [k, v] of xk.cleanParams) u.searchParams.append(k, v);
           targetUrl = u.href;
         } catch {}
-        isNewSelection = true;
+        isNewSelection = mode === "sticky";
       }
     }
 
-    // Root + sticky → sticky root
     if (!targetUrl && (path === "/" || path === "") && sticky) {
       try {
         const base = new URL(sticky);
@@ -419,10 +356,10 @@ export default {
         base.search = "";
         for (const [k, v] of xk.cleanParams) base.searchParams.append(k, v);
         targetUrl = base.href;
+        mode = "sticky";
       } catch {}
     }
 
-    // Relative + sticky
     if (!targetUrl && sticky) {
       try {
         const base = new URL(sticky);
@@ -432,37 +369,34 @@ export default {
         base.search = "";
         for (const [k, v] of xk.cleanParams) base.searchParams.append(k, v);
         targetUrl = base.href;
+        mode = "sticky";
       } catch {
-        return new Response("Invalid sticky origin", { status: 400 });
+        return new Response("Invalid sticky origin", { status: 400, headers: { Server: "xk" } });
       }
     }
 
-    // No target → homepage
     if (!targetUrl) {
-      return new Response(homePage(VERSION), {
-        headers: { "content-type": "text/html; charset=utf-8" },
-      });
+      try {
+        const homeReq = new Request(new URL("/xk/public/index.html", proxyOrigin), request);
+        const home = env.ASSETS ? await env.ASSETS.fetch(homeReq) : await fetch(homeReq);
+        if (home.ok) {
+          return new Response(await home.text(), {
+            status: 200,
+            headers: { "content-type": "text/html; charset=utf-8", Server: "xk", "Cache-Control": "no-store" },
+          });
+        }
+      } catch {}
+      return new Response("Homepage missing (xk/public/index.html)", { status: 500, headers: { Server: "xk" } });
     }
 
-    // Fetch
     let upstream;
     try {
       const headers = new Headers(request.headers);
-      headers.delete("host");
-      headers.delete("cf-connecting-ip");
-      headers.delete("cf-ipcountry");
-      headers.delete("cf-ray");
-      headers.delete("cf-visitor");
-      headers.delete("x-forwarded-for");
-      headers.delete("x-real-ip");
-
+      ["host","cf-connecting-ip","cf-ipcountry","cf-ray","cf-visitor","cf-worker","x-forwarded-for","x-forwarded-proto","x-real-ip","true-client-ip","cdn-loop"]
+        .forEach((k) => headers.delete(k));
       if (!headers.get("user-agent")) {
-        headers.set(
-          "user-agent",
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        );
+        headers.set("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
       }
-
       upstream = await fetch(targetUrl, {
         method: request.method,
         headers,
@@ -470,33 +404,33 @@ export default {
         redirect: "manual",
       });
     } catch (err) {
-      return new Response(`Upstream error: ${err.message}`, {
+      return new Response("Upstream request failed", {
         status: 502,
-        headers: { "content-type": "text/plain" },
+        headers: { "content-type": "text/plain", Server: "xk" },
       });
     }
 
-    // Redirects
     if ([301, 302, 303, 307, 308].includes(upstream.status)) {
       const loc = upstream.headers.get("location");
       if (loc) {
         let newLoc = loc;
         try {
           const abs = new URL(loc, targetUrl).href;
-          newLoc = proxyOrigin + "/:/" + abs;
+          const prefix = mode === "norewrite" ? "/:n/" : "/:/";
+          newLoc = proxyOrigin + prefix + abs;
         } catch {}
-        const h = new Headers({ Location: newLoc, "Access-Control-Allow-Origin": "*" });
+        const h = new Headers({ Location: newLoc, "Access-Control-Allow-Origin": "*", Server: "xk" });
         if (isNewSelection) setOriginCookie(h, targetUrl);
         return new Response(null, { status: upstream.status, headers: h });
       }
     }
 
-    const responseHeaders = cleanHeaders(upstream.headers, xk.headersMode);
+    const responseHeaders = cleanResponseHeaders(upstream.headers, xk.headersMode);
     if (isNewSelection) setOriginCookie(responseHeaders, targetUrl);
 
     const contentType = upstream.headers.get("content-type") || "";
 
-    if (!isText(contentType)) {
+    if (!isText(contentType) || mode === "norewrite") {
       return new Response(upstream.body, {
         status: upstream.status,
         statusText: upstream.statusText,
@@ -505,9 +439,9 @@ export default {
     }
 
     let body = await upstream.text();
-
     if (contentType.includes("html")) {
-      body = injectClient(body, xk, proxyOrigin);
+      if (xk.allowJs === false) body = stripScripts(body);
+      body = injectClient(body, xk);
     }
 
     return new Response(body, {
@@ -517,59 +451,3 @@ export default {
     });
   },
 };
-
-// ====================== HOMEPAGE ======================
-
-function homePage(version) {
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>XK Proxy 2.0 — Apex Cloak</title>
-<style>
-:root{color-scheme:dark}
-body{font-family:system-ui,-apple-system,sans-serif;background:#09090b;color:#e4e4e7;max-width:780px;margin:48px auto;padding:0 20px;line-height:1.65}
-h1{font-size:1.9rem;margin:0 0 4px}
-.ver{color:#a1a1aa;font-size:.9rem;margin-bottom:28px}
-.box{background:#18181b;border:1px solid #27272a;border-radius:10px;padding:18px 20px;margin:18px 0}
-code{background:#27272a;padding:2px 7px;border-radius:4px;font-size:.88em}
-ul{padding-left:1.3em}
-li{margin:6px 0}
-.badge{display:inline-block;background:#14532d;color:#86efac;font-size:.75rem;padding:2px 8px;border-radius:99px;margin-left:8px}
-</style>
-</head>
-<body>
-<h1>XK Proxy 2.0 <span class="badge">Apex Cloak</span></h1>
-<div class="ver">v${version}</div>
-
-<div class="box">
-<strong>Basic</strong><br><br>
-<code>/:/duckduckgo.com</code><br>
-<code>/:/y8.com?xk.proxy.http=0</code><br>
-<code>?xk.index</code> — clear sticky origin
-</div>
-
-<div class="box">
-<strong>Tab cloaking</strong><br><br>
-<code>?xk.tab.favicon=Google</code> or <code>clever</code> or <code>google.com</code><br>
-<code>?xk.tab.title=Google Classroom</code><br>
-<code>?xk.cloak=1</code> (or yes / true) — full blob: cloak<br><br>
-Example:<br>
-<code>/:/duckduckgo.com?xk.tab.favicon=Google&xk.tab.title=Google&xk.cloak=1</code>
-</div>
-
-<div class="box">
-<strong>Storage tools</strong><br><br>
-<code>?xk.ls.wipe</code> / <code>?xk.ls.view</code><br>
-<code>?xk.idb.wipe</code> / <code>?xk.idb.view</code><br>
-<code>?xk.opfs.wipe</code> / <code>?xk.opfs.view</code>
-</div>
-
-<p style="color:#71717a;font-size:.88rem;margin-top:36px">
-After setting a site, the root of this proxy loads that site.
-Cloak turns the page into a blob: so monitoring extensions cannot see the real URL.
-</p>
-</body>
-</html>`;
-}
