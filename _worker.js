@@ -1,37 +1,18 @@
 
 /**
- * XK Cloudflare Pages Proxy 2.0 — Apex Cloak
- * ------------------------------------------
- * Sticky-origin proxy with cloaking, no-rewrite mode, IP hiding,
- * and static asset passthrough for /xk/public and /xk/lib.
- *
- * Endpoints:
- *   /:/target          sticky proxy (sets hostname cookie)
- *   /:n/target         no-rewrite, no sticky
- *   /$/target          legacy alias of /:/
- *
- * Control params (all endpoints):
- *   xk.proxy.http=0|1
- *   xk.proxy.headers=iframe|zero
- *   xk.index           clear sticky, show homepage
- *   xk.tab.favicon=Google|clever|google.com|...
- *   xk.tab.title=...
- *   xk.cloak=1|yes|true
- *   xk.allowjs=0|no|false   (strip/disable JS)
- *   xk.ls.wipe / xk.ls.view
- *   xk.idb.wipe / xk.idb.view
- *   xk.opfs.wipe / xk.opfs.view
+ * XK Cloudflare Pages Proxy 2.0.5
+ * Sticky origin · cloak (loop-safe) · persistent xk.x.* · separate homepage
  */
 
-const VERSION = "2.0.4-apex";
-
-const HOMEPAGE_HTML = "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n  <meta charset=\"utf-8\" />\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n  <title>XK Proxy 2.0</title>\n  <style>\n    :root { color-scheme: dark; }\n    * { box-sizing: border-box; }\n    body {\n      margin: 0;\n      min-height: 100vh;\n      font-family: system-ui, -apple-system, sans-serif;\n      background: #09090b;\n      color: #e4e4e7;\n      display: flex;\n      flex-direction: column;\n      align-items: center;\n      justify-content: center;\n      padding: 24px;\n    }\n    h1 {\n      font-size: 1.75rem;\n      margin: 0 0 6px;\n      font-weight: 650;\n    }\n    .sub {\n      color: #71717a;\n      font-size: 0.9rem;\n      margin-bottom: 28px;\n    }\n    .search-box {\n      width: min(560px, 100%);\n      display: flex;\n      gap: 8px;\n      margin-bottom: 18px;\n    }\n    .search-box input {\n      flex: 1;\n      padding: 14px 16px;\n      border-radius: 10px;\n      border: 1px solid #27272a;\n      background: #18181b;\n      color: #fafafa;\n      font-size: 1rem;\n      outline: none;\n    }\n    .search-box input:focus {\n      border-color: #3b82f6;\n    }\n    .search-box button {\n      padding: 0 18px;\n      border-radius: 10px;\n      border: 0;\n      background: #2563eb;\n      color: #fff;\n      font-weight: 600;\n      cursor: pointer;\n    }\n    .search-box button:hover { background: #1d4ed8; }\n    .hints {\n      width: min(560px, 100%);\n      color: #a1a1aa;\n      font-size: 0.85rem;\n      line-height: 1.55;\n    }\n    .hints code {\n      background: #27272a;\n      padding: 1px 6px;\n      border-radius: 4px;\n      font-size: 0.8em;\n    }\n    .row {\n      display: flex;\n      flex-wrap: wrap;\n      gap: 8px;\n      margin-top: 14px;\n    }\n    .chip {\n      background: #18181b;\n      border: 1px solid #27272a;\n      padding: 6px 12px;\n      border-radius: 999px;\n      font-size: 0.8rem;\n      color: #d4d4d8;\n      cursor: pointer;\n      text-decoration: none;\n    }\n    .chip:hover { border-color: #3b82f6; color: #fff; }\n  </style>\n</head>\n<body>\n  <h1>XK Proxy 2.0</h1>\n  <div class=\"sub\">Apex \u00b7 sticky origin \u00b7 cloak \u00b7 no-rewrite</div>\n\n  <form class=\"search-box\" id=\"go\" autocomplete=\"off\">\n    <input\n      id=\"q\"\n      type=\"text\"\n      placeholder=\"Search DuckDuckGo or paste a URL\u2026\"\n      autofocus\n    />\n    <button type=\"submit\">Go</button>\n  </form>\n\n  <div class=\"hints\">\n    <div>Examples:</div>\n    <div class=\"row\">\n      <a class=\"chip\" href=\"/:/duckduckgo.com\">DuckDuckGo</a>\n      <a class=\"chip\" href=\"/:/example.com\">example.com</a>\n      <a class=\"chip\" href=\"/:/y8.com?xk.proxy.http=0\">y8 (HTTP)</a>\n      <a class=\"chip\" href=\"/:/duckduckgo.com?xk.tab.favicon=Google&xk.tab.title=Google&xk.cloak=1\">Cloaked DDG</a>\n    </div>\n    <p style=\"margin-top:18px\">\n      <code>/:/site</code> \u2014 normal sticky proxy<br>\n      <code>/:n/site</code> \u2014 no-rewrite (raw fetch, no sticky)<br>\n      <code>?xk.index</code> \u2014 clear sticky origin<br>\n      <code>?xk.cloak=1</code> \u00b7 <code>?xk.tab.title=\u2026</code> \u00b7 <code>?xk.tab.favicon=Google</code><br>\n      <code>?xk.allowjs=0</code> \u2014 disable JavaScript on the page\n    </p>\n  </div>\n\n  <script>\n    (function () {\n      var form = document.getElementById(\"go\");\n      var input = document.getElementById(\"q\");\n\n      function isProbablyUrl(text) {\n        text = text.trim();\n        if (/^https?:\\/\\//i.test(text)) return true;\n        if (/^[a-z0-9.-]+\\.[a-z]{2,}([\\/:?#]|$)/i.test(text)) return true;\n        return false;\n      }\n\n      form.addEventListener(\"submit\", function (e) {\n        e.preventDefault();\n        var q = (input.value || \"\").trim();\n        if (!q) return;\n\n        if (isProbablyUrl(q)) {\n          // Strip protocol for cleaner path; proxy will default to https\n          var target = q.replace(/^https?:\\/\\//i, \"\");\n          location.href = \"/:/\" + target;\n        } else {\n          // DuckDuckGo search through the proxy\n          location.href = \"/:/duckduckgo.com/?q=\" + encodeURIComponent(q);\n        }\n      });\n    })();\n  </script>\n</body>\n</html>\n";
-
+const VERSION = "2.0.5-apex";
 
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const RATE_LIMIT_MAX = 100;
 const COOKIE_ORIGIN = "xk_origin";
-const COOKIE_MAX_AGE = 60 * 60 * 24 * 7;
+const COOKIE_X_CLOAK = "xk_x_cloak";
+const COOKIE_X_TITLE = "xk_x_title";
+const COOKIE_X_IMAGE = "xk_x_image";
+const COOKIE_MAX_AGE = 60 * 60 * 24 * 30;
 
 const FAVICON_SHORTCUTS = {
   google: "https://www.google.com",
@@ -53,27 +34,22 @@ const FAVICON_SHORTCUTS = {
 };
 
 const STRIP_RESPONSE_HEADERS = [
-  "cf-ray", "cf-cache-status", "cf-request-id", "cf-ipcountry",
-  "server", "x-powered-by", "via", "x-served-by", "x-cache", "x-cache-hits",
-  "x-timer", "x-edge-location", "x-request-id", "report-to", "nel",
-  "content-security-policy", "content-security-policy-report-only",
-  "x-frame-options", "x-content-type-options", "strict-transport-security",
-  "cross-origin-opener-policy", "cross-origin-embedder-policy",
-  "cross-origin-resource-policy", "permissions-policy",
+  "cf-ray","cf-cache-status","cf-request-id","cf-ipcountry","server","x-powered-by","via",
+  "x-served-by","x-cache","x-cache-hits","x-timer","x-edge-location","x-request-id","report-to","nel",
+  "content-security-policy","content-security-policy-report-only","x-frame-options","x-content-type-options",
+  "strict-transport-security","cross-origin-opener-policy","cross-origin-embedder-policy",
+  "cross-origin-resource-policy","permissions-policy",
 ];
 
 function getClientIP(request) {
-  return (
-    request.headers.get("CF-Connecting-IP") ||
-    request.headers.get("X-Forwarded-For")?.split(",")[0]?.trim() ||
-    "0.0.0.0"
-  );
+  return request.headers.get("CF-Connecting-IP") ||
+    request.headers.get("X-Forwarded-For")?.split(",")[0]?.trim() || "0.0.0.0";
 }
 
 async function hashIP(ip) {
   const data = new TextEncoder().encode(ip + "|xk-proxy-salt-v2");
   const buf = await crypto.subtle.digest("SHA-256", data);
-  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 24);
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2,"0")).join("").slice(0,24);
 }
 
 function truthy(val) {
@@ -81,14 +57,28 @@ function truthy(val) {
   const v = String(val).toLowerCase().trim();
   return v === "1" || v === "true" || v === "yes" || v === "on";
 }
-
 function falsy(val) {
   if (val == null) return false;
   const v = String(val).toLowerCase().trim();
   return v === "0" || v === "false" || v === "no" || v === "off";
 }
 
-function parseXk(url) {
+function getCookie(request, name) {
+  const cookies = request.headers.get("Cookie") || "";
+  const m = cookies.match(new RegExp("(?:^|;\\s*)" + name + "=([^;]+)"));
+  if (!m) return null;
+  try { return decodeURIComponent(m[1]); } catch { return m[1]; }
+}
+
+function setCookie(headers, name, value, maxAge) {
+  headers.append("Set-Cookie",
+    name + "=" + encodeURIComponent(value) + "; Path=/; Max-Age=" + maxAge + "; Secure; SameSite=Lax");
+}
+function clearCookie(headers, name) {
+  headers.append("Set-Cookie", name + "=; Path=/; Max-Age=0; Secure; SameSite=Lax");
+}
+
+function parseXk(url, request) {
   const p = url.searchParams;
   const o = {
     forceHttp: null,
@@ -104,7 +94,13 @@ function parseXk(url) {
     tabTitle: p.get("xk.tab.title"),
     cloak: truthy(p.get("xk.cloak")),
     allowJs: true,
+    // persistent xk.x.*
+    xCloakSet: p.has("xk.x.cloak") ? truthy(p.get("xk.x.cloak")) : null,
+    xTitleSet: p.get("xk.x.title"),
+    xImageSet: p.get("xk.x.image"),
+    xReset: p.has("xk.x.n"),
   };
+
   if (p.has("xk.allowjs")) {
     const v = p.get("xk.allowjs");
     if (falsy(v)) o.allowJs = false;
@@ -116,6 +112,14 @@ function parseXk(url) {
     if (v === "1") o.forceHttp = 1;
   }
   if (p.has("xk.proxy.headers")) o.headersMode = p.get("xk.proxy.headers") || "iframe";
+
+  // Merge cookie-based permanent overrides
+  const cCloak = getCookie(request, COOKIE_X_CLOAK);
+  const cTitle = getCookie(request, COOKIE_X_TITLE);
+  const cImage = getCookie(request, COOKIE_X_IMAGE);
+  if (cCloak === "1") o.cloak = true;
+  if (cTitle && !o.tabTitle) o.tabTitle = cTitle;
+  if (cImage && !o.tabFavicon) o.tabFavicon = cImage;
 
   const clean = new URLSearchParams();
   for (const [k, v] of p.entries()) if (!k.startsWith("xk.")) clean.append(k, v);
@@ -162,19 +166,6 @@ function ensureTrailingSlash(pathname) {
   return pathname;
 }
 
-function setOriginCookie(headers, origin) {
-  headers.append("Set-Cookie", COOKIE_ORIGIN + "=" + encodeURIComponent(origin) + "; Path=/; Max-Age=" + COOKIE_MAX_AGE + "; Secure; SameSite=Lax");
-}
-function clearOriginCookie(headers) {
-  headers.append("Set-Cookie", COOKIE_ORIGIN + "=; Path=/; Max-Age=0; Secure; SameSite=Lax");
-}
-function getOriginFromCookie(request) {
-  const cookies = request.headers.get("Cookie") || "";
-  const m = cookies.match(new RegExp("(?:^|;\\s*)" + COOKIE_ORIGIN + "=([^;]+)"));
-  if (!m) return null;
-  try { return decodeURIComponent(m[1]); } catch { return null; }
-}
-
 function cleanResponseHeaders(upstreamHeaders, mode) {
   const h = new Headers(upstreamHeaders);
   for (const k of STRIP_RESPONSE_HEADERS) h.delete(k);
@@ -206,9 +197,26 @@ async function checkBanAndRate(request, env) {
   return { blocked: false, ipHash };
 }
 
+/** Serve static homepage / assets via ASSETS binding */
+async function serveAsset(env, request, path) {
+  if (!env.ASSETS) return null;
+  try {
+    // Try exact path
+    let res = await env.ASSETS.fetch(new Request(new URL(path, request.url), request));
+    if (res && res.status !== 404) return res;
+    // Try without leading issues
+    if (path.endsWith("/")) {
+      res = await env.ASSETS.fetch(new Request(new URL(path + "index.html", request.url), request));
+      if (res && res.status !== 404) return res;
+    }
+  } catch {}
+  return null;
+}
+
 function buildClientScript(opts) {
   const chunks = [];
 
+  // Storage tools
   if (opts.lsWipe) chunks.push('try{localStorage.clear();sessionStorage.clear();}catch(e){}');
   if (opts.idbWipe) chunks.push('(async function(){try{var d=await indexedDB.databases();for(var i=0;i<d.length;i++)if(d[i].name)indexedDB.deleteDatabase(d[i].name);}catch(e){}})();');
   if (opts.opfsWipe) chunks.push('(async function(){try{if(navigator.storage&&navigator.storage.getDirectory){var r=await navigator.storage.getDirectory();for await(var e of r.entries())await r.removeEntry(e[0],{recursive:true});}}catch(e){}})();');
@@ -220,41 +228,68 @@ function buildClientScript(opts) {
     chunks.push('(function(){try{document.addEventListener("DOMContentLoaded",function(){var n=document.querySelectorAll("script");for(var i=0;i<n.length;i++)n[i].remove();},true);}catch(e){}})();');
   }
 
+  // ===== POWERFUL title + favicon lock =====
   const favHost = opts.tabFavicon ? resolveFaviconHost(opts.tabFavicon) : null;
   if (opts.tabTitle || favHost) {
     const titleJS = opts.tabTitle ? JSON.stringify(opts.tabTitle) : "null";
     const favJS = favHost ? JSON.stringify(favHost) : "null";
     chunks.push(
-      '(function(){var T=' + titleJS + ',F=' + favJS + ';' +
-      'function setFav(h){var l=document.querySelector("link[rel*=\'icon\']");if(!l){l=document.createElement("link");l.rel="icon";document.head.appendChild(l);}l.href=h;}' +
-      'if(T){document.title=T;try{Object.defineProperty(document,"title",{get:function(){return T;},set:function(){},configurable:true});}catch(e){}setInterval(function(){if(document.title!==T)document.title=T;},500);}' +
-      'if(F){var u="https://www.google.com/s2/favicons?domain="+encodeURIComponent(F.replace(/^https?:\\/\\//,""))+"&sz=64";setFav(u);setInterval(function(){setFav(u);},1200);}' +
+      '(function(){' +
+      'var T=' + titleJS + ',F=' + favJS + ';' +
+      'function applyTitle(){if(!T)return;try{document.title=T;}catch(e){}' +
+      'try{var el=document.querySelector("title");if(el)el.textContent=T;}catch(e){}}' +
+      'function setFav(h){try{' +
+      'var links=document.querySelectorAll("link[rel*=\'icon\'],link[rel*=\'shortcut\']");' +
+      'if(!links.length){var l=document.createElement("link");l.rel="icon";document.head.appendChild(l);links=[l];}' +
+      'for(var i=0;i<links.length;i++)links[i].href=h;' +
+      '}catch(e){}}' +
+      'if(T){' +
+      'applyTitle();' +
+      'try{Object.defineProperty(document,"title",{get:function(){return T;},set:function(){applyTitle();},configurable:true});}catch(e){}' +
+      'try{var obs=new MutationObserver(function(){applyTitle();});' +
+      'obs.observe(document.documentElement,{childList:true,subtree:true,characterData:true});}catch(e){}' +
+      'setInterval(applyTitle,300);' +
+      '}' +
+      'if(F){var u="https://www.google.com/s2/favicons?domain="+encodeURIComponent(String(F).replace(/^https?:\\/\\//,""))+"&sz=64";' +
+      'setFav(u);setInterval(function(){setFav(u);},800);}' +
       '})();'
     );
   }
 
+  // ===== CLOAK (loop-safe) =====
+  // Critical: never cloak when already inside an iframe (window !== top)
+  // Also skip if data-xk-cloaked marker present
   if (opts.cloak) {
     const titleJS = opts.tabTitle ? JSON.stringify(opts.tabTitle) : "null";
     const favJS = favHost ? JSON.stringify(favHost) : "null";
     chunks.push(
       '(function(){' +
+      // LOOP GUARD
+      'try{if(window!==window.top)return;}catch(e){return;}' +
       'if(window.__xkC)return;window.__xkC=1;' +
-      'var real=location.href,title=document.title||"...",fav="";' +
-      'var il=document.querySelector("link[rel*=\'icon\']");if(il)fav=il.href;' +
+      'if(document.documentElement&&document.documentElement.getAttribute("data-xk-cloaked"))return;' +
+      'var real=location.href;' +
+      // Don't cloak the cloak blob itself
+      'if(/^blob:/.test(real))return;' +
+      'var title=document.title||"...";' +
+      'var fav="";var il=document.querySelector("link[rel*=\'icon\']");if(il)fav=il.href;' +
+      'var LT=' + titleJS + ',FH=' + favJS + ';' +
       'var h="";' +
-      'h+="\\u003c!DOCTYPE html\\u003e\\u003chtml\\u003e\\u003chead\\u003e";' +
+      'h+="\\u003c!DOCTYPE html\\u003e\\u003chtml data-xk-cloaked=\\"1\\"\\u003e\\u003chead\\u003e";' +
       'h+="\\u003cmeta charset=\\"utf-8\\"\\u003e\\u003cmeta name=\\"viewport\\" content=\\"width=device-width,initial-scale=1\\"\\u003e";' +
-      'h+="\\u003ctitle\\u003e"+String(title).replace(/</g,"&lt;")+"\\u003c/title\\u003e";' +
+      'h+="\\u003ctitle\\u003e"+String(LT||title).replace(/</g,"&lt;")+"\\u003c/title\\u003e";' +
       'if(fav)h+="\\u003clink rel=\\"icon\\" href=\\""+fav+"\\"\\u003e";' +
       'h+="\\u003cstyle\\u003ehtml,body{margin:0;height:100%;overflow:hidden;background:#000}iframe{border:0;width:100%;height:100%;display:block}\\u003c/style\\u003e";' +
       'h+="\\u003c/head\\u003e\\u003cbody\\u003e";' +
-      'h+="\\u003ciframe id=\\"f\\" src=\\""+real+"\\" allow=\\"accelerometer;autoplay;camera;clipboard-read;clipboard-write;encrypted-media;fullscreen;geolocation;gyroscope;microphone;midi;payment;picture-in-picture;sync-xhr;usb;xr-spatial-tracking\\" allowfullscreen\\u003e\\u003c/iframe\\u003e";' +
+      // iframe gets a marker query so server/client know it's inside cloak
+      'var src=real+(real.indexOf("?")>=0?"&":"?")+"xk._frame=1";' +
+      'h+="\\u003ciframe id=\\"f\\" src=\\""+src+"\\" allow=\\"accelerometer;autoplay;camera;clipboard-read;clipboard-write;encrypted-media;fullscreen;geolocation;gyroscope;microphone;midi;payment;picture-in-picture;sync-xhr;usb;xr-spatial-tracking\\" allowfullscreen\\u003e\\u003c/iframe\\u003e";' +
       'h+="\\u003cscript\\u003e";' +
-      'h+="(function(){var f=document.getElementById(\'f\'),LT=' + titleJS + ',FH=' + favJS + ';" ;' +
-      'h+="function sf(u){var l=document.querySelector(\'link[rel*=\\\\\'icon\\\\\']\');if(!l){l=document.createElement(\'link\');l.rel=\'icon\';document.head.appendChild(l);}l.href=u;}";' +
-      'h+="setInterval(function(){try{if(LT)document.title=LT;else if(f.contentDocument&&f.contentDocument.title)document.title=f.contentDocument.title;}catch(e){}},600);";' +
-      'h+="if(FH){var u=\'https://www.google.com/s2/favicons?domain=\'+encodeURIComponent(String(FH).replace(/^https?:\\\\/\\\\//,\'\'))+\'&sz=64\';sf(u);setInterval(function(){sf(u);},2000);}";' +
-      'h+="if(LT){try{Object.defineProperty(document,\'title\',{get:function(){return LT;},set:function(){},configurable:true});}catch(e){}}";' +
+      'h+="(function(){var f=document.getElementById(\'f\'),LT=' + titleJS + ',FH=' + favJS + ';";' +
+      'h+="function sf(u){var ls=document.querySelectorAll(\'link[rel*=\\\\\'icon\\\\\']\');if(!ls.length){var l=document.createElement(\'link\');l.rel=\'icon\';document.head.appendChild(l);ls=[l];}for(var i=0;i<ls.length;i++)ls[i].href=u;}";' +
+      'h+="function at(){if(!LT)return;document.title=LT;try{Object.defineProperty(document,\'title\',{get:function(){return LT;},set:function(){},configurable:true});}catch(e){}}";' +
+      'h+="setInterval(function(){try{if(LT)at();else if(f.contentDocument&&f.contentDocument.title)document.title=f.contentDocument.title;}catch(e){}},500);at();";' +
+      'h+="if(FH){var u=\'https://www.google.com/s2/favicons?domain=\'+encodeURIComponent(String(FH).replace(/^https?:\\\\/\\\\//,\'\'))+\'&sz=64\';sf(u);setInterval(function(){sf(u);},1000);}";' +
       'h+="})();\\u003c/script\\u003e\\u003c/body\\u003e\\u003c/html\\u003e";' +
       'location.replace(URL.createObjectURL(new Blob([h],{type:"text/html"})));' +
       '})();'
@@ -266,6 +301,7 @@ function buildClientScript(opts) {
 }
 
 function injectClient(html, opts) {
+  // Never inject cloak into pages that are already framed markers
   const script = buildClientScript(opts);
   if (!script) return html;
   if (/<\/head>/i.test(html)) return html.replace(/<\/head>/i, script + "</head>");
@@ -285,7 +321,7 @@ export default {
     const url = new URL(request.url);
     let path = url.pathname;
     const proxyOrigin = url.origin;
-    const xk = parseXk(url);
+    const xk = parseXk(url, request);
 
     if (request.method === "OPTIONS") {
       return new Response(null, {
@@ -299,22 +335,19 @@ export default {
       });
     }
 
-    // Static: /xk/public/* and /xk/lib/* never proxied
-    if (path.startsWith("/xk/public/") || path.startsWith("/xk/lib/") || path === "/xk/public" || path === "/xk/lib") {
-      if (env.ASSETS) {
-        try {
-          const res = await env.ASSETS.fetch(request);
-          if (res.status !== 404) return res;
-        } catch {}
+    // Static assets — always try ASSETS first, never proxy
+    if (path.startsWith("/xk/public/") || path.startsWith("/xk/lib/") ||
+        path === "/xk/public" || path === "/xk/lib") {
+      const asset = await serveAsset(env, request, path.endsWith("/") ? path + "index.html" : path);
+      if (asset) return asset;
+      if (path.includes("index.html") || path.endsWith("/")) {
+        const asset2 = await serveAsset(env, request, "/xk/public/index.html");
+        if (asset2) return asset2;
       }
-      // Fallback: serve embedded homepage for index paths
-      if (path === "/xk/public/index.html" || path === "/xk/public/" || path === "/xk/public") {
-        return new Response(HOMEPAGE_HTML, {
-          status: 200,
-          headers: { "content-type": "text/html; charset=utf-8", Server: "xk" },
-        });
-      }
-      return new Response("Not found", { status: 404, headers: { Server: "xk" } });
+      return new Response("Static asset not found: " + path + "\nMake sure xk/public/ is in the Pages deployment.", {
+        status: 404,
+        headers: { "content-type": "text/plain", Server: "xk" },
+      });
     }
 
     const guard = await checkBanAndRate(request, env);
@@ -325,10 +358,54 @@ export default {
       });
     }
 
+    // Handle cookie mutations for xk.x.* and sticky clear BEFORE routing
+    const outHeaders = new Headers({ Server: "xk" });
+    let cookieTouched = false;
+
+    if (xk.xReset) {
+      clearCookie(outHeaders, COOKIE_X_CLOAK);
+      clearCookie(outHeaders, COOKIE_X_TITLE);
+      clearCookie(outHeaders, COOKIE_X_IMAGE);
+      cookieTouched = true;
+    }
+    if (xk.xCloakSet === true) {
+      setCookie(outHeaders, COOKIE_X_CLOAK, "1", COOKIE_MAX_AGE);
+      cookieTouched = true;
+      xk.cloak = true;
+    } else if (xk.xCloakSet === false) {
+      clearCookie(outHeaders, COOKIE_X_CLOAK);
+      cookieTouched = true;
+    }
+    if (xk.xTitleSet != null && xk.xTitleSet !== "") {
+      setCookie(outHeaders, COOKIE_X_TITLE, xk.xTitleSet, COOKIE_MAX_AGE);
+      xk.tabTitle = xk.xTitleSet;
+      cookieTouched = true;
+    }
+    if (xk.xImageSet != null && xk.xImageSet !== "") {
+      setCookie(outHeaders, COOKIE_X_IMAGE, xk.xImageSet, COOKIE_MAX_AGE);
+      xk.tabFavicon = xk.xImageSet;
+      cookieTouched = true;
+    }
+
     if (xk.clearIndex) {
-      const headers = new Headers({ "content-type": "text/html; charset=utf-8", Server: "xk", "Cache-Control": "no-store" });
-      clearOriginCookie(headers);
-      return new Response(HOMEPAGE_HTML, { status: 200, headers });
+      clearCookie(outHeaders, COOKIE_ORIGIN);
+      cookieTouched = true;
+      const home = await serveAsset(env, request, "/xk/public/index.html");
+      if (home) {
+        const body = await home.text();
+        outHeaders.set("content-type", "text/html; charset=utf-8");
+        outHeaders.set("Cache-Control", "no-store");
+        return new Response(body, { status: 200, headers: outHeaders });
+      }
+      return new Response("Homepage missing. Ensure xk/public/index.html is deployed and ASSETS is available.", {
+        status: 500, headers: outHeaders,
+      });
+    }
+
+    // If only resetting x cookies on root, show homepage
+    if (cookieTouched && (path === "/" || path === "") && !url.searchParams.has("xk.cloak") &&
+        !url.searchParams.has("xk.tab.title") && !getCookie(request, COOKIE_ORIGIN)) {
+      // fall through to homepage logic below
     }
 
     let mode = null;
@@ -344,7 +421,7 @@ export default {
 
     let targetUrl = null;
     let isNewSelection = false;
-    const sticky = getOriginFromCookie(request);
+    const sticky = getCookie(request, COOKIE_ORIGIN);
 
     if (mode && rawTarget) {
       targetUrl = normalizeTarget(rawTarget, xk.forceHttp);
@@ -353,6 +430,8 @@ export default {
           const u = new URL(targetUrl);
           if (mode === "sticky") u.pathname = ensureTrailingSlash(u.pathname);
           for (const [k, v] of xk.cleanParams) u.searchParams.append(k, v);
+          // strip internal frame marker from upstream
+          u.searchParams.delete("xk._frame");
           targetUrl = u.href;
         } catch {}
         isNewSelection = mode === "sticky";
@@ -370,7 +449,7 @@ export default {
       } catch {}
     }
 
-    if (!targetUrl && sticky) {
+    if (!targetUrl && sticky && path !== "/" && path !== "") {
       try {
         const base = new URL(sticky);
         let p = path || "/";
@@ -385,35 +464,53 @@ export default {
       }
     }
 
+    // Homepage
     if (!targetUrl) {
-      return new Response(HOMEPAGE_HTML, {
-        status: 200,
-        headers: { "content-type": "text/html; charset=utf-8", Server: "xk", "Cache-Control": "no-store" },
-      });
+      const home = await serveAsset(env, request, "/xk/public/index.html");
+      if (home) {
+        const body = await home.text();
+        outHeaders.set("content-type", "text/html; charset=utf-8");
+        outHeaders.set("Cache-Control", "no-store");
+        return new Response(body, { status: 200, headers: outHeaders });
+      }
+      return new Response(
+        "Homepage missing (xk/public/index.html).\n" +
+        "Cloudflare Pages must include the xk/ folder as static assets.\n" +
+        "Check: Pages → Settings → Builds → that there is NO 'Output directory' filtering them out,\n" +
+        "and that the deployment file list contains xk/public/index.html.\n" +
+        "env.ASSETS " + (env.ASSETS ? "is present" : "is MISSING"),
+        { status: 500, headers: { "content-type": "text/plain", Server: "xk" } }
+      );
+    }
+
+    // Skip cloak injection when request is the inner frame of a cloak
+    const isInnerFrame = url.searchParams.has("xk._frame") || url.searchParams.get("xk._frame") === "1";
+    if (isInnerFrame) {
+      xk.cloak = false; // critical: prevent infinite re-cloak
     }
 
     let upstream;
     try {
       const headers = new Headers(request.headers);
-      ["host","cf-connecting-ip","cf-ipcountry","cf-ray","cf-visitor","cf-worker","x-forwarded-for","x-forwarded-proto","x-real-ip","true-client-ip","cdn-loop"]
-        .forEach((k) => headers.delete(k));
+      ["host","cf-connecting-ip","cf-ipcountry","cf-ray","cf-visitor","cf-worker",
+       "x-forwarded-for","x-forwarded-proto","x-real-ip","true-client-ip","cdn-loop"]
+        .forEach(k => headers.delete(k));
       if (!headers.get("user-agent")) {
         headers.set("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
       }
       upstream = await fetch(targetUrl, {
         method: request.method,
         headers,
-        body: ["GET", "HEAD"].includes(request.method) ? undefined : request.body,
+        body: ["GET","HEAD"].includes(request.method) ? undefined : request.body,
         redirect: "manual",
       });
-    } catch (err) {
+    } catch {
       return new Response("Upstream request failed", {
-        status: 502,
-        headers: { "content-type": "text/plain", Server: "xk" },
+        status: 502, headers: { "content-type": "text/plain", Server: "xk" },
       });
     }
 
-    if ([301, 302, 303, 307, 308].includes(upstream.status)) {
+    if ([301,302,303,307,308].includes(upstream.status)) {
       const loc = upstream.headers.get("location");
       if (loc) {
         let newLoc = loc;
@@ -423,21 +520,22 @@ export default {
           newLoc = proxyOrigin + prefix + abs;
         } catch {}
         const h = new Headers({ Location: newLoc, "Access-Control-Allow-Origin": "*", Server: "xk" });
-        if (isNewSelection) setOriginCookie(h, targetUrl);
+        // copy any pending cookie headers
+        for (const [k,v] of outHeaders.entries()) if (k.toLowerCase() === "set-cookie") h.append(k,v);
+        if (isNewSelection) setCookie(h, COOKIE_ORIGIN, targetUrl, COOKIE_MAX_AGE);
         return new Response(null, { status: upstream.status, headers: h });
       }
     }
 
     const responseHeaders = cleanResponseHeaders(upstream.headers, xk.headersMode);
-    if (isNewSelection) setOriginCookie(responseHeaders, targetUrl);
+    for (const [k,v] of outHeaders.entries()) if (k.toLowerCase() === "set-cookie") responseHeaders.append(k,v);
+    if (isNewSelection) setCookie(responseHeaders, COOKIE_ORIGIN, targetUrl, COOKIE_MAX_AGE);
 
     const contentType = upstream.headers.get("content-type") || "";
 
     if (!isText(contentType) || mode === "norewrite") {
       return new Response(upstream.body, {
-        status: upstream.status,
-        statusText: upstream.statusText,
-        headers: responseHeaders,
+        status: upstream.status, statusText: upstream.statusText, headers: responseHeaders,
       });
     }
 
@@ -448,9 +546,7 @@ export default {
     }
 
     return new Response(body, {
-      status: upstream.status,
-      statusText: upstream.statusText,
-      headers: responseHeaders,
+      status: upstream.status, statusText: upstream.statusText, headers: responseHeaders,
     });
   },
 };
