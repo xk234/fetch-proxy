@@ -246,213 +246,98 @@ function buildClientScript(opts, proxyOrigin) {
 
   // ---- Storage tools ----
   if (opts.lsWipe) {
-    parts.push(`
-      try { localStorage.clear(); sessionStorage.clear(); console.log("[XK] localStorage wiped"); } catch(e){}
-    `);
+    parts.push('try{localStorage.clear();sessionStorage.clear();console.log("[XK] localStorage wiped");}catch(e){}');
   }
   if (opts.idbWipe) {
-    parts.push(`
-      (async()=>{ try {
-        const dbs = await indexedDB.databases();
-        for (const db of dbs) if (db.name) indexedDB.deleteDatabase(db.name);
-        console.log("[XK] IndexedDB wiped");
-      } catch(e){} })();
-    `);
+    parts.push('(async function(){try{var dbs=await indexedDB.databases();for(var i=0;i<dbs.length;i++){if(dbs[i].name)indexedDB.deleteDatabase(dbs[i].name);}console.log("[XK] IndexedDB wiped");}catch(e){}})();');
   }
   if (opts.opfsWipe) {
-    parts.push(`
-      (async()=>{ try {
-        if (navigator.storage?.getDirectory) {
-          const root = await navigator.storage.getDirectory();
-          for await (const [name] of root.entries()) await root.removeEntry(name,{recursive:true});
-          console.log("[XK] OPFS wiped");
-        }
-      } catch(e){} })();
-    `);
+    parts.push('(async function(){try{if(navigator.storage&&navigator.storage.getDirectory){var root=await navigator.storage.getDirectory();for await(var entry of root.entries()){await root.removeEntry(entry[0],{recursive:true});}console.log("[XK] OPFS wiped");}}catch(e){}})();');
   }
   if (opts.lsView) {
-    parts.push(`
-      try {
-        const data = {};
-        for (let i=0;i<localStorage.length;i++){ const k=localStorage.key(i); data[k]=localStorage.getItem(k); }
-        console.log("[XK] localStorage:", data);
-        document.body.insertAdjacentHTML("afterbegin", '<pre style="background:#111;color:#0f0;padding:12px;z-index:999999;position:relative;max-height:40vh;overflow:auto">'+JSON.stringify(data,null,2)+'</pre>');
-      } catch(e){}
-    `);
+    parts.push('try{var data={};for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);data[k]=localStorage.getItem(k);}console.log("[XK] localStorage:",data);document.body.insertAdjacentHTML("afterbegin","\\u003cpre style=\\"background:#111;color:#0f0;padding:12px;z-index:999999;position:relative;max-height:40vh;overflow:auto\\"\\u003e"+JSON.stringify(data,null,2)+"\\u003c/pre\\u003e");}catch(e){}');
   }
   if (opts.idbView) {
-    parts.push(`
-      (async()=>{ try {
-        const dbs = await indexedDB.databases();
-        console.log("[XK] IDB:", dbs);
-        document.body.insertAdjacentHTML("afterbegin", '<pre style="background:#111;color:#0ff;padding:12px;z-index:999999;position:relative">'+JSON.stringify(dbs,null,2)+'</pre>');
-      } catch(e){} })();
-    `);
+    parts.push('(async function(){try{var dbs=await indexedDB.databases();console.log("[XK] IDB:",dbs);document.body.insertAdjacentHTML("afterbegin","\\u003cpre style=\\"background:#111;color:#0ff;padding:12px;z-index:999999;position:relative\\"\\u003e"+JSON.stringify(dbs,null,2)+"\\u003c/pre\\u003e");}catch(e){}})();');
   }
   if (opts.opfsView) {
-    parts.push(`
-      (async()=>{ try {
-        if (navigator.storage?.getDirectory) {
-          const root = await navigator.storage.getDirectory();
-          const entries = [];
-          for await (const [name, handle] of root.entries()) entries.push({name, kind: handle.kind});
-          console.log("[XK] OPFS:", entries);
-          document.body.insertAdjacentHTML("afterbegin", '<pre style="background:#111;color:#ff0;padding:12px;z-index:999999;position:relative">'+JSON.stringify(entries,null,2)+'</pre>');
-        }
-      } catch(e){} })();
-    `);
+    parts.push('(async function(){try{if(navigator.storage&&navigator.storage.getDirectory){var root=await navigator.storage.getDirectory();var entries=[];for await(var entry of root.entries()){entries.push({name:entry[0],kind:entry[1].kind});}console.log("[XK] OPFS:",entries);document.body.insertAdjacentHTML("afterbegin","\\u003cpre style=\\"background:#111;color:#ff0;padding:12px;z-index:999999;position:relative\\"\\u003e"+JSON.stringify(entries,null,2)+"\\u003c/pre\\u003e");}}catch(e){}})();');
   }
 
   // ---- Favicon + Title lock ----
   const faviconHost = opts.tabFavicon ? resolveFaviconHost(opts.tabFavicon) : null;
-  const lockedTitle = opts.tabTitle ? JSON.stringify(opts.tabTitle) : null;
+  const lockedTitleJS = opts.tabTitle ? JSON.stringify(opts.tabTitle) : "null";
+  const faviconHostJS = faviconHost ? JSON.stringify(faviconHost) : "null";
 
-  if (faviconHost || lockedTitle) {
-    parts.push(`
-      (function(){
-        const lockedTitle = ${lockedTitle};
-        const faviconHost = ${faviconHost ? JSON.stringify(faviconHost) : "null"};
-
-        function setFavicon(href) {
-          let link = document.querySelector("link[rel*='icon']");
-          if (!link) {
-            link = document.createElement("link");
-            link.rel = "icon";
-            document.head.appendChild(link);
-          }
-          link.href = href;
-        }
-
-        function lockTitle() {
-          if (!lockedTitle) return;
-          if (document.title !== lockedTitle) document.title = lockedTitle;
-        }
-
-        // Initial
-        if (lockedTitle) {
-          document.title = lockedTitle;
-          // Aggressive lock
-          const observer = new MutationObserver(lockTitle);
-          observer.observe(document.querySelector("title") || document.head, { childList: true, characterData: true, subtree: true });
-          setInterval(lockTitle, 800);
-          // Also trap common ways pages change title
-          const desc = Object.getOwnPropertyDescriptor(Document.prototype, "title");
-          if (desc && desc.set) {
-            Object.defineProperty(document, "title", {
-              get() { return lockedTitle; },
-              set() { /* ignore */ },
-              configurable: true
-            });
-          }
-        }
-
-        if (faviconHost) {
-          // Prefer Google's s2 favicon service (reliable) then direct
-          const candidates = [
-            "https://www.google.com/s2/favicons?domain=" + encodeURIComponent(faviconHost.replace(/^https?:\\/\\//,"")) + "&sz=64",
-            faviconHost + "/favicon.ico",
-            faviconHost + "/favicon.png"
-          ];
-          setFavicon(candidates[0]);
-          // Keep it locked
-          setInterval(() => setFavicon(candidates[0]), 1500);
-        }
-      })();
-    `);
+  if (faviconHost || opts.tabTitle) {
+    parts.push(
+      '(function(){' +
+      'var lockedTitle=' + lockedTitleJS + ';' +
+      'var faviconHost=' + faviconHostJS + ';' +
+      'function setFavicon(href){var link=document.querySelector("link[rel*=\'icon\']");if(!link){link=document.createElement("link");link.rel="icon";document.head.appendChild(link);}link.href=href;}' +
+      'function lockTitle(){if(!lockedTitle)return;if(document.title!==lockedTitle)document.title=lockedTitle;}' +
+      'if(lockedTitle){document.title=lockedTitle;try{var observer=new MutationObserver(lockTitle);var t=document.querySelector("title");if(t)observer.observe(t,{childList:true,characterData:true,subtree:true});}catch(e){}setInterval(lockTitle,800);try{Object.defineProperty(document,"title",{get:function(){return lockedTitle;},set:function(){},configurable:true});}catch(e){}}' +
+      'if(faviconHost){var href="https://www.google.com/s2/favicons?domain="+encodeURIComponent(faviconHost.replace(/^https?:\\/\\//,""))+"&sz=64";setFavicon(href);setInterval(function(){setFavicon(href);},1500);}' +
+      '})();'
+    );
   }
 
   // ---- Full Cloak (blob:) ----
   if (opts.cloak) {
-    parts.push(`
-      (function(){
-        // Only run once
-        if (window.__xkCloaked) return;
-        window.__xkCloaked = true;
+    // Everything that will become the blob HTML is built with \u003c / \u003e
+    // so the outer HTML parser never sees a real </script>
+    parts.push(
+      '(function(){' +
+      'if(window.__xkCloaked)return;' +
+      'window.__xkCloaked=true;' +
+      'var realUrl=location.href;' +
+      'var currentTitle=document.title||"Loading...";' +
+      'var currentFavicon="";' +
+      'var iconLink=document.querySelector("link[rel*=\'icon\']");' +
+      'if(iconLink)currentFavicon=iconLink.href;' +
+      'var lockedTitle=' + lockedTitleJS + ';' +
+      'var faviconHost=' + faviconHostJS + ';' +
 
-        const realUrl = location.href;
+      // Build the blob HTML string using only unicode escapes for tags
+      'var html="";' +
+      'html+="\\u003c!DOCTYPE html\\u003e";' +
+      'html+="\\u003chtml\\u003e\\u003chead\\u003e";' +
+      'html+="\\u003cmeta charset=\\"utf-8\\"\\u003e";' +
+      'html+="\\u003cmeta name=\\"viewport\\" content=\\"width=device-width,initial-scale=1\\"\\u003e";' +
+      'html+="\\u003ctitle\\u003e"+currentTitle.replace(/</g,"&lt;")+"\\u003c/title\\u003e";' +
+      'if(currentFavicon){html+="\\u003clink rel=\\"icon\\" href=\\""+currentFavicon+"\\"\\u003e";}' +
+      'html+="\\u003cstyle\\u003ehtml,body{margin:0;padding:0;height:100%;overflow:hidden;background:#000}iframe{border:0;width:100%;height:100%;display:block}\\u003c/style\\u003e";' +
+      'html+="\\u003c/head\\u003e\\u003cbody\\u003e";' +
+      'html+="\\u003ciframe id=\\"xkframe\\" src=\\""+realUrl+"\\" allow=\\"accelerometer; autoplay; camera; clipboard-read; clipboard-write; encrypted-media; fullscreen; geolocation; gyroscope; microphone; midi; payment; picture-in-picture; sync-xhr; usb; xr-spatial-tracking\\" allowfullscreen\\u003e\\u003c/iframe\\u003e";' +
 
-        // Capture current title + favicon before we leave
-        const currentTitle = document.title || "Loading...";
-        let currentFavicon = "";
-        const iconLink = document.querySelector("link[rel*='icon']");
-        if (iconLink) currentFavicon = iconLink.href;
+      // Inner script of the blob page (also unicode-escaped)
+      'html+="\\u003cscript\\u003e";' +
+      'html+="(function(){";' +
+      'html+="var frame=document.getElementById(\'xkframe\');";' +
+      'html+="var lockedTitle="+JSON.stringify(opts.tabTitle||null)+";";' +
+      'html+="var faviconHost="+JSON.stringify(faviconHost)+";";' +
+      'html+="function setFav(href){var l=document.querySelector(\'link[rel*=\\\\\'icon\\\\\']\');if(!l){l=document.createElement(\'link\');l.rel=\'icon\';document.head.appendChild(l);}l.href=href;}";' +
+      'html+="setInterval(function(){try{if(lockedTitle){document.title=lockedTitle;}else if(frame.contentDocument&&frame.contentDocument.title){document.title=frame.contentDocument.title;}}catch(e){}},600);";' +
+      'html+="if(faviconHost){var href=\'https://www.google.com/s2/favicons?domain=\'+encodeURIComponent(faviconHost.replace(/^https?:\\\\/\\\\//,\'\'))+\'&sz=64\';setFav(href);setInterval(function(){setFav(href);},2000);}";' +
+      'html+="var __xkFav=\""+String(currentFavicon).replace(/\\/g,"\\\\").replace(/"/g,"\\\"")+"\";";' +
+      'html+="if(__xkFav){setInterval(function(){setFav(__xkFav);},2000);}";' +
+      'html+="if(lockedTitle){try{Object.defineProperty(document,\'title\',{get:function(){return lockedTitle;},set:function(){},configurable:true});}catch(e){}}";' +
+      'html+="})();";' +
+      'html+="\\u003c/script\\u003e";' +
+      'html+="\\u003c/body\\u003e\\u003c/html\\u003e";' +
 
-        // Build the blob page
-        const html = \`<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>\${currentTitle.replace(/</g,"&lt;")}</title>
-\${currentFavicon ? '<link rel="icon" href="'+currentFavicon+'">' : ''}
-<style>
-  html,body{margin:0;padding:0;height:100%;overflow:hidden;background:#000}
-  iframe{border:0;width:100%;height:100%;display:block}
-</style>
-</head>
-<body>
-<iframe id="xkframe" src="\${realUrl}" allow="accelerometer; autoplay; camera; clipboard-read; clipboard-write; encrypted-media; fullscreen; geolocation; gyroscope; microphone; midi; payment; picture-in-picture; sync-xhr; usb; xr-spatial-tracking" allowfullscreen></iframe>
-<script>
-(function(){
-  const frame = document.getElementById("xkframe");
-  const lockedTitle = \${JSON.stringify(opts.tabTitle || null)};
-  const faviconHost = \${faviconHost ? JSON.stringify(faviconHost) : "null"};
-
-  function setFav(href){
-    let l = document.querySelector("link[rel*='icon']");
-    if(!l){ l=document.createElement("link"); l.rel="icon"; document.head.appendChild(l); }
-    l.href = href;
-  }
-
-  // Sync title from iframe when possible
-  setInterval(() => {
-    try {
-      if (lockedTitle) {
-        document.title = lockedTitle;
-      } else if (frame.contentDocument && frame.contentDocument.title) {
-        document.title = frame.contentDocument.title;
-      }
-    } catch(e){}
-  }, 600);
-
-  // Keep favicon locked
-  if (faviconHost) {
-    const href = "https://www.google.com/s2/favicons?domain=" + encodeURIComponent(faviconHost.replace(/^https?:\\/\\//,"")) + "&sz=64";
-    setFav(href);
-    setInterval(() => setFav(href), 2000);
-  } else if (currentFavicon) {
-    setInterval(() => setFav(currentFavicon), 2000);
-  }
-
-  // Also lock document.title property
-  if (lockedTitle) {
-    try {
-      Object.defineProperty(document, "title", {
-        get(){ return lockedTitle; },
-        set(){},
-        configurable: true
-      });
-    } catch(e){}
-  }
-})();
-</script>
-</body>
-</html>\`;
-
-        const blob = new Blob([html], { type: "text/html" });
-        const blobUrl = URL.createObjectURL(blob);
-        location.replace(blobUrl);
-      })();
-    `);
+      'var blob=new Blob([html],{type:"text/html"});' +
+      'var blobUrl=URL.createObjectURL(blob);' +
+      'location.replace(blobUrl);' +
+      '})();'
+    );
   }
 
   if (parts.length === 0) return "";
 
-  return `<script id="xk-client-control">
-(function(){
-${parts.join("\n")}
-})();
-</script>`;
+  // Outer script tag – real tags, but any accidental </script inside the body
+  // is already avoided because we never emit a literal </script in the JS strings.
+  return '<script id="xk-client-control">\\n(function(){\\n' + parts.join('\\n') + '\\n})();\\n</script>';
 }
 
 function injectClient(html, opts, proxyOrigin) {
