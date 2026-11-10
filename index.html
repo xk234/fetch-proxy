@@ -1,0 +1,530 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>XK Proxy</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b0b0f;
+      --panel: #12121a;
+      --border: #23232f;
+      --text: #e8e8ed;
+      --muted: #8b8b9a;
+      --accent: #5b8cff;
+      --accent2: #3d6ef0;
+      --danger: #ef4444;
+      --ok: #22c55e;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Top chrome */
+    .chrome {
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      padding: 8px 10px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .tabs {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      overflow-x: auto;
+    }
+    .tab {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      background: #1a1a24;
+      border: 1px solid var(--border);
+      border-radius: 8px 8px 0 0;
+      font-size: 12px;
+      color: var(--muted);
+      cursor: pointer;
+      max-width: 180px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .tab.active {
+      background: var(--bg);
+      color: var(--text);
+      border-bottom-color: var(--bg);
+    }
+    .tab .x {
+      opacity: 0.5;
+      font-size: 14px;
+      line-height: 1;
+    }
+    .tab .x:hover { opacity: 1; color: var(--danger); }
+    .new-tab {
+      width: 28px; height: 28px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: #1a1a24;
+      color: var(--text);
+      cursor: pointer;
+      font-size: 16px;
+    }
+
+    .bar {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .navbtns { display: flex; gap: 4px; }
+    .navbtns button {
+      width: 32px; height: 32px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: #1a1a24;
+      color: var(--text);
+      cursor: pointer;
+    }
+    .navbtns button:hover { border-color: var(--accent); }
+    .omnibox {
+      flex: 1;
+      display: flex;
+      background: #1a1a24;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .omnibox input {
+      flex: 1;
+      border: 0;
+      background: transparent;
+      color: var(--text);
+      padding: 10px 12px;
+      font-size: 14px;
+      outline: none;
+    }
+    .omnibox button {
+      border: 0;
+      background: var(--accent);
+      color: #fff;
+      padding: 0 16px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .omnibox button:hover { background: var(--accent2); }
+
+    .tools {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .tools button, .tools select {
+      height: 30px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: #1a1a24;
+      color: var(--text);
+      padding: 0 10px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .tools button:hover, .tools select:hover { border-color: var(--accent); }
+    .tools .danger:hover { border-color: var(--danger); color: var(--danger); }
+
+    /* Viewport */
+    .viewport {
+      flex: 1;
+      position: relative;
+      background: #000;
+    }
+    .viewport iframe {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      border: 0;
+      background: #fff;
+    }
+    .empty {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      color: var(--muted);
+      padding: 24px;
+      text-align: center;
+    }
+    .empty h1 {
+      margin: 0;
+      font-size: 1.6rem;
+      color: var(--text);
+      font-weight: 650;
+    }
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: center;
+      max-width: 560px;
+    }
+    .chip {
+      padding: 8px 14px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: #1a1a24;
+      color: var(--text);
+      font-size: 13px;
+      cursor: pointer;
+      text-decoration: none;
+    }
+    .chip:hover { border-color: var(--accent); }
+
+    .status {
+      font-size: 11px;
+      color: var(--muted);
+      padding: 4px 10px;
+      border-top: 1px solid var(--border);
+      background: var(--panel);
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .modal-bg {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,.55);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 50;
+    }
+    .modal-bg.show { display: flex; }
+    .modal {
+      width: min(420px, 92vw);
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 18px;
+    }
+    .modal h3 { margin: 0 0 10px; }
+    .modal label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
+    .modal input {
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: #1a1a24;
+      color: var(--text);
+    }
+    .modal .row { display: flex; gap: 8px; margin-top: 14px; }
+    .modal .row button {
+      flex: 1;
+      height: 36px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: #1a1a24;
+      color: var(--text);
+      cursor: pointer;
+    }
+    .modal .row button.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <div class="chrome">
+    <div class="tabs" id="tabs">
+      <button class="new-tab" id="btnNew" title="New tab">+</button>
+    </div>
+    <div class="bar">
+      <div class="navbtns">
+        <button id="btnBack" title="Back">←</button>
+        <button id="btnFwd" title="Forward">→</button>
+        <button id="btnReload" title="Reload">↻</button>
+      </div>
+      <form class="omnibox" id="form">
+        <input id="url" type="text" placeholder="Search DuckDuckGo or enter URL…" autocomplete="off" spellcheck="false" />
+        <button type="submit">Go</button>
+      </form>
+    </div>
+    <div class="tools">
+      <button id="btnHome">Home</button>
+      <button id="btnCloak">Cloak tab</button>
+      <button id="btnPermCloak">Perm cloak (cookie)</button>
+      <button id="btnOverride">Title / Favicon…</button>
+      <button id="btnResetX" class="danger">Reset xk.x.*</button>
+      <button id="btnClearSticky" class="danger">Clear sticky host</button>
+      <select id="proto">
+        <option value="">https (default)</option>
+        <option value="0">force http</option>
+        <option value="1">force https</option>
+      </select>
+      <select id="allowjs">
+        <option value="">JS on</option>
+        <option value="0">JS off</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="viewport" id="viewport">
+    <div class="empty" id="empty">
+      <h1>XK Proxy</h1>
+      <div>Search or open a site. Sticky origin + cloak built in.</div>
+      <div class="chips">
+        <a class="chip" data-go="duckduckgo.com">DuckDuckGo</a>
+        <a class="chip" data-go="example.com">example.com</a>
+        <a class="chip" data-go="y8.com?xk.proxy.http=0">y8 (HTTP)</a>
+        <a class="chip" data-go="wikipedia.org">Wikipedia</a>
+        <a class="chip" data-go="www.tiktok.com/">TikTok</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="status">
+    <span id="statusLeft">Ready</span>
+    <span id="statusRight">XK Proxy 2.0</span>
+  </div>
+
+  <div class="modal-bg" id="modal">
+    <div class="modal">
+      <h3>Persistent override (xk.x.*)</h3>
+      <label>Title (xk.x.title)</label>
+      <input id="mTitle" placeholder="Google Classroom" />
+      <label>Favicon host (xk.x.image)</label>
+      <input id="mImage" placeholder="Google / clever / google.com" />
+      <div class="row">
+        <button id="mCancel">Cancel</button>
+        <button class="primary" id="mApply">Apply cookies</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  (function () {
+    var tabs = [];
+    var active = -1;
+
+    var tabsEl = document.getElementById("tabs");
+    var viewport = document.getElementById("viewport");
+    var empty = document.getElementById("empty");
+    var urlInput = document.getElementById("url");
+    var statusLeft = document.getElementById("statusLeft");
+    var form = document.getElementById("form");
+
+    function isUrl(t) {
+      t = (t || "").trim();
+      if (/^https?:\/\//i.test(t)) return true;
+      if (/^[a-z0-9.-]+\.[a-z]{2,}([\/:?#]|$)/i.test(t)) return true;
+      return false;
+    }
+
+    function buildProxyPath(raw) {
+      raw = (raw || "").trim();
+      if (!raw) return null;
+      var q = [];
+      var proto = document.getElementById("proto").value;
+      var allowjs = document.getElementById("allowjs").value;
+      if (proto !== "") q.push("xk.proxy.http=" + proto);
+      if (allowjs !== "") q.push("xk.allowjs=" + allowjs);
+
+      var target;
+      if (isUrl(raw)) {
+        target = raw.replace(/^https?:\/\//i, "");
+      } else {
+        target = "duckduckgo.com/?q=" + encodeURIComponent(raw);
+      }
+      var path = "/:/" + target;
+      if (q.length) {
+        path += (path.indexOf("?") >= 0 ? "&" : "?") + q.join("&");
+      }
+      return path;
+    }
+
+    function renderTabs() {
+      // remove old tab buttons (keep +)
+      var nodes = tabsEl.querySelectorAll(".tab");
+      nodes.forEach(function (n) { n.remove(); });
+      tabs.forEach(function (t, i) {
+        var el = document.createElement("div");
+        el.className = "tab" + (i === active ? " active" : "");
+        el.title = t.title || t.url;
+        el.innerHTML = "<span>" + (t.title || t.url || "New Tab").replace(/</g, "&lt;") + "</span><span class='x'>×</span>";
+        el.addEventListener("click", function (e) {
+          if (e.target.classList.contains("x")) {
+            closeTab(i);
+          } else {
+            activate(i);
+          }
+        });
+        tabsEl.insertBefore(el, document.getElementById("btnNew"));
+      });
+    }
+
+    function activate(i) {
+      if (i < 0 || i >= tabs.length) return;
+      active = i;
+      tabs.forEach(function (t, idx) {
+        if (t.iframe) t.iframe.style.display = idx === active ? "block" : "none";
+      });
+      empty.style.display = tabs.length ? "none" : "flex";
+      urlInput.value = tabs[i] ? tabs[i].url : "";
+      statusLeft.textContent = tabs[i] ? tabs[i].url : "Ready";
+      renderTabs();
+    }
+
+    function closeTab(i) {
+      var t = tabs[i];
+      if (t && t.iframe) t.iframe.remove();
+      tabs.splice(i, 1);
+      if (!tabs.length) {
+        active = -1;
+        empty.style.display = "flex";
+        urlInput.value = "";
+        statusLeft.textContent = "Ready";
+      } else {
+        activate(Math.max(0, i - 1));
+      }
+      renderTabs();
+    }
+
+    function openInTab(path, title) {
+      empty.style.display = "none";
+      var iframe = document.createElement("iframe");
+      iframe.setAttribute("allow", "accelerometer; autoplay; camera; clipboard-read; clipboard-write; encrypted-media; fullscreen; geolocation; gyroscope; microphone; midi; payment; picture-in-picture; sync-xhr; usb; xr-spatial-tracking");
+      iframe.allowFullscreen = true;
+      iframe.src = path;
+      viewport.appendChild(iframe);
+      var tab = { url: path, title: title || path, iframe: iframe };
+      tabs.push(tab);
+      activate(tabs.length - 1);
+
+      iframe.addEventListener("load", function () {
+        try {
+          var docTitle = iframe.contentDocument && iframe.contentDocument.title;
+          if (docTitle) {
+            tab.title = docTitle;
+            renderTabs();
+          }
+        } catch (e) {}
+      });
+    }
+
+    form.addEventListener("submit", function (e) {
+      e.preventDefault();
+      var path = buildProxyPath(urlInput.value);
+      if (!path) return;
+      openInTab(path, urlInput.value.trim());
+    });
+
+    document.getElementById("btnNew").addEventListener("click", function () {
+      empty.style.display = "flex";
+      // create blank tab slot conceptually — just focus empty
+      active = -1;
+      tabs.forEach(function (t) { if (t.iframe) t.iframe.style.display = "none"; });
+      urlInput.value = "";
+      urlInput.focus();
+      renderTabs();
+    });
+
+    document.getElementById("btnBack").addEventListener("click", function () {
+      var t = tabs[active];
+      if (t && t.iframe && t.iframe.contentWindow) {
+        try { t.iframe.contentWindow.history.back(); } catch (e) {}
+      }
+    });
+    document.getElementById("btnFwd").addEventListener("click", function () {
+      var t = tabs[active];
+      if (t && t.iframe && t.iframe.contentWindow) {
+        try { t.iframe.contentWindow.history.forward(); } catch (e) {}
+      }
+    });
+    document.getElementById("btnReload").addEventListener("click", function () {
+      var t = tabs[active];
+      if (t && t.iframe) t.iframe.src = t.iframe.src;
+    });
+
+    document.getElementById("btnHome").addEventListener("click", function () {
+      location.href = "/?xk.index";
+    });
+
+    document.getElementById("btnCloak").addEventListener("click", function () {
+      var t = tabs[active];
+      if (!t) return alert("Open a tab first");
+      var u = t.url;
+      u += (u.indexOf("?") >= 0 ? "&" : "?") + "xk.cloak=1";
+      t.iframe.src = u;
+      t.url = u;
+      urlInput.value = u;
+    });
+
+    document.getElementById("btnPermCloak").addEventListener("click", function () {
+      // set permanent cloak cookie via navigation
+      var t = tabs[active];
+      var base = t ? t.url : "/:/duckduckgo.com";
+      var u = base + (base.indexOf("?") >= 0 ? "&" : "?") + "xk.x.cloak=1";
+      if (t) {
+        t.iframe.src = u;
+        t.url = u;
+      } else {
+        openInTab(u, "Perm cloak");
+      }
+    });
+
+    document.getElementById("btnOverride").addEventListener("click", function () {
+      document.getElementById("modal").classList.add("show");
+    });
+    document.getElementById("mCancel").addEventListener("click", function () {
+      document.getElementById("modal").classList.remove("show");
+    });
+    document.getElementById("mApply").addEventListener("click", function () {
+      var title = document.getElementById("mTitle").value.trim();
+      var image = document.getElementById("mImage").value.trim();
+      var params = [];
+      if (title) params.push("xk.x.title=" + encodeURIComponent(title));
+      if (image) params.push("xk.x.image=" + encodeURIComponent(image));
+      if (!params.length) return;
+      var t = tabs[active];
+      var base = t ? t.url : "/:/duckduckgo.com";
+      var u = base + (base.indexOf("?") >= 0 ? "&" : "?") + params.join("&");
+      document.getElementById("modal").classList.remove("show");
+      if (t) {
+        t.iframe.src = u;
+        t.url = u;
+      } else {
+        openInTab(u, title || "Override");
+      }
+    });
+
+    document.getElementById("btnResetX").addEventListener("click", function () {
+      location.href = "/?xk.x.n=1";
+    });
+
+    document.getElementById("btnClearSticky").addEventListener("click", function () {
+      location.href = "/?xk.index";
+    });
+
+    document.querySelectorAll("[data-go]").forEach(function (el) {
+      el.addEventListener("click", function (e) {
+        e.preventDefault();
+        var path = buildProxyPath(el.getAttribute("data-go"));
+        openInTab(path, el.textContent);
+      });
+    });
+  })();
+  </script>
+</body>
+</html>
