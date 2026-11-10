@@ -239,13 +239,6 @@ function resolveFaviconHost(value) {
   return null;
 }
 
-function ensureTrailingSlash(pathname) {
-  if (pathname === "/" || pathname.endsWith("/")) return pathname;
-  const last = pathname.split("/").pop() || "";
-  if (!last.includes(".")) return pathname + "/";
-  return pathname;
-}
-
 function cleanResponseHeaders(upstreamHeaders, mode) {
   const h = new Headers(upstreamHeaders);
   for (const k of STRIP_RESPONSE_HEADERS) h.delete(k);
@@ -603,7 +596,6 @@ export default {
       if (targetUrl) {
         try {
           const u = new URL(targetUrl);
-          if (mode === "sticky") u.pathname = ensureTrailingSlash(u.pathname);
           for (const [k, v] of xk.cleanParams) u.searchParams.append(k, v);
           // strip internal frame marker from upstream
           u.searchParams.delete("xk._frame");
@@ -631,9 +623,8 @@ export default {
     if (!targetUrl && sticky && path !== "/" && path !== "") {
       try {
         const base = new URL(sticky);
-        let p = path || "/";
-        p = ensureTrailingSlash(p);
-        base.pathname = p;
+        // Preserve the browser-requested path exactly; APIs often require no trailing slash.
+        base.pathname = path || "/";
         base.search = "";
         for (const [k, v] of xk.cleanParams) base.searchParams.append(k, v);
         targetUrl = base.href;
@@ -695,24 +686,62 @@ export default {
       } catch (e) {}
     }
 
-    let upstream;
-    try {
-      const headers = new Headers(request.headers);
-      ["host","cf-connecting-ip","cf-ipcountry","cf-ray","cf-visitor","cf-worker",
-       "x-forwarded-for","x-forwarded-proto","x-real-ip","true-client-ip","cdn-loop"]
-        .forEach(k => headers.delete(k));
-      if (!headers.get("user-agent")) {
-        headers.set("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+    const headers = new Headers(request.headers);
+    ["host","cf-connecting-ip","cf-ipcountry","cf-ray","cf-visitor","cf-worker",
+     "x-forwarded-for","x-forwarded-proto","x-real-ip","true-client-ip","cdn-loop"]
+      .forEach(k => headers.delete(k));
+    if (!headers.get("user-agent")) {
+      headers.set("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+    }
+
+    // Retry only idempotent reads, against the same upstream URL. Never retry
+    // 4xx responses (including 403/429) or replay request bodies.
+    const retryableMethod = request.method === "GET" || request.method === "HEAD";
+    const maxAttempts = retryableMethod ? 3 : 1;
+    let upstream = null;
+    let retryAfterHeader = null;
+    let attempts = 0;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      attempts = attempt;
+      try {
+        upstream = await fetch(targetUrl, {
+          method: request.method,
+          headers,
+          body: retryableMethod ? undefined : request.body,
+          redirect: "manual",
+        });
+        const transientStatus = [500, 502, 503, 504].includes(upstream.status);
+        if (!retryableMethod || !transientStatus || attempt === maxAttempts) break;
+        retryAfterHeader = upstream.headers.get("retry-after");
+        try { if (upstream.body) await upstream.body.cancel(); } catch {}
+        upstream = null;
+      } catch {
+        upstream = null;
+        retryAfterHeader = null;
+        if (!retryableMethod || attempt === maxAttempts) break;
       }
-      upstream = await fetch(targetUrl, {
-        method: request.method,
-        headers,
-        body: ["GET","HEAD"].includes(request.method) ? undefined : request.body,
-        redirect: "manual",
-      });
-    } catch {
-      return new Response("Upstream request failed", {
-        status: 502, headers: { "content-type": "text/plain", Server: "xk" },
+      const retryAfterSeconds = Number(retryAfterHeader);
+      const backoffMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
+        ? Math.min(2000, retryAfterSeconds * 1000)
+        : Math.min(1200, 150 * (2 ** (attempt - 1)));
+      await new Promise(resolve => setTimeout(resolve, backoffMs));
+    }
+
+    if (!upstream) {
+      return new Response(JSON.stringify({
+        error: "UPSTREAM_NETWORK_ERROR",
+        message: "The upstream server could not be reached after the allowed retry attempts.",
+        attempts,
+        retryable: retryableMethod,
+      }), {
+        status: 502,
+        headers: {
+          "content-type": "application/json; charset=utf-8",
+          "cache-control": "no-store",
+          "x-xk-error": "upstream-network-error",
+          "x-xk-retry-attempts": String(attempts),
+          Server: "xk",
+        },
       });
     }
 
@@ -725,7 +754,13 @@ export default {
           const prefix = mode === "norewrite" ? "/:n/" : "/:/";
           newLoc = proxyOrigin + prefix + abs;
         } catch {}
-        const h = new Headers({ Location: newLoc, "Access-Control-Allow-Origin": "*", Server: "xk" });
+        const h = new Headers({
+          Location: newLoc,
+          "Access-Control-Allow-Origin": "*",
+          "X-XK-Upstream-Status": String(upstream.status),
+          "X-XK-Retry-Attempts": String(attempts),
+          Server: "xk",
+        });
         // copy any pending cookie headers
         for (const [k,v] of outHeaders.entries()) if (k.toLowerCase() === "set-cookie") h.append(k,v);
         if (isNewSelection) setCookie(h, COOKIE_ORIGIN, targetUrl, COOKIE_MAX_AGE);
@@ -734,6 +769,9 @@ export default {
     }
 
     const responseHeaders = cleanResponseHeaders(upstream.headers, xk.headersMode);
+    responseHeaders.set("X-XK-Upstream-Status", String(upstream.status));
+    responseHeaders.set("X-XK-Retry-Attempts", String(attempts));
+    if (upstream.status >= 500) responseHeaders.set("X-XK-Error", "upstream-http-" + upstream.status);
     for (const [k,v] of outHeaders.entries()) if (k.toLowerCase() === "set-cookie") responseHeaders.append(k,v);
     if (isNewSelection) setCookie(responseHeaders, COOKIE_ORIGIN, targetUrl, COOKIE_MAX_AGE);
 
