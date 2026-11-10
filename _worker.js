@@ -762,8 +762,8 @@ export default {
     if (xk.isTikTok || siteModeKey === "tiktok") {
       const hostPart = "(?:[a-z0-9-]+\\.)*(?:tiktok\\.com|tiktokv\\.com|tiktokv\\.eu|tiktokcdn\\.com|tiktokcdn-eu\\.com|tiktokcdn-us\\.com|ttlivecdn\\.com|ttwstatic\\.com|musical\\.ly|byteoversea\\.com|ibyteimg\\.com|ibytedtos\\.com|tiktokw\\.eu|tiktokw\\.com|bytedance\\.com)";
       // Do not match URLs that already sit after /:/
-      const reAbs = new RegExp("(?<!/:/)https?://" + hostPart + "[^\\s\\"'<>]*", "gi");
-      const reProto = new RegExp("(?<!/:/)(?<!https:)(?<!http:)//" + hostPart + "[^\\s\\"'<>]*", "gi");
+      const reAbs = new RegExp(String.raw`(?<!/:/)https?://${hostPart}[^\s"\x27<>]*`, "gi");
+      const reProto = new RegExp(String.raw`(?<!/:/)(?<!https:)(?<!http:)//${hostPart}[^\s"\x27<>]*`, "gi");
       body = body.replace(reAbs, (m) => proxyOrigin + "/:/" + m);
       body = body.replace(reProto, (m) => proxyOrigin + "/:/https:" + m);
     }
