@@ -4,7 +4,10 @@
  * Sticky origin · cloak (loop-safe) · persistent xk.x.* · separate homepage
  */
 
-const VERSION = "2.0.6-apex";
+const VERSION = "2.0.7-apex";
+
+const HOMEPAGE_HTML = "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n  <meta charset=\"utf-8\" />\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n  <title>XK Proxy</title>\n  <style>\n    :root {\n      color-scheme: dark;\n      --bg: #0b0b0f;\n      --panel: #12121a;\n      --border: #23232f;\n      --text: #e8e8ed;\n      --muted: #8b8b9a;\n      --accent: #5b8cff;\n      --accent2: #3d6ef0;\n      --danger: #ef4444;\n      --ok: #22c55e;\n    }\n    * { box-sizing: border-box; }\n    html, body { height: 100%; margin: 0; }\n    body {\n      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;\n      background: var(--bg);\n      color: var(--text);\n      display: flex;\n      flex-direction: column;\n    }\n\n    /* Top chrome */\n    .chrome {\n      background: var(--panel);\n      border-bottom: 1px solid var(--border);\n      padding: 8px 10px 10px;\n      display: flex;\n      flex-direction: column;\n      gap: 8px;\n    }\n    .tabs {\n      display: flex;\n      gap: 6px;\n      align-items: center;\n      overflow-x: auto;\n    }\n    .tab {\n      display: flex;\n      align-items: center;\n      gap: 8px;\n      padding: 6px 12px;\n      background: #1a1a24;\n      border: 1px solid var(--border);\n      border-radius: 8px 8px 0 0;\n      font-size: 12px;\n      color: var(--muted);\n      cursor: pointer;\n      max-width: 180px;\n      white-space: nowrap;\n      overflow: hidden;\n      text-overflow: ellipsis;\n    }\n    .tab.active {\n      background: var(--bg);\n      color: var(--text);\n      border-bottom-color: var(--bg);\n    }\n    .tab .x {\n      opacity: 0.5;\n      font-size: 14px;\n      line-height: 1;\n    }\n    .tab .x:hover { opacity: 1; color: var(--danger); }\n    .new-tab {\n      width: 28px; height: 28px;\n      border-radius: 8px;\n      border: 1px solid var(--border);\n      background: #1a1a24;\n      color: var(--text);\n      cursor: pointer;\n      font-size: 16px;\n    }\n\n    .bar {\n      display: flex;\n      gap: 8px;\n      align-items: center;\n    }\n    .navbtns { display: flex; gap: 4px; }\n    .navbtns button {\n      width: 32px; height: 32px;\n      border-radius: 8px;\n      border: 1px solid var(--border);\n      background: #1a1a24;\n      color: var(--text);\n      cursor: pointer;\n    }\n    .navbtns button:hover { border-color: var(--accent); }\n    .omnibox {\n      flex: 1;\n      display: flex;\n      background: #1a1a24;\n      border: 1px solid var(--border);\n      border-radius: 10px;\n      overflow: hidden;\n    }\n    .omnibox input {\n      flex: 1;\n      border: 0;\n      background: transparent;\n      color: var(--text);\n      padding: 10px 12px;\n      font-size: 14px;\n      outline: none;\n    }\n    .omnibox button {\n      border: 0;\n      background: var(--accent);\n      color: #fff;\n      padding: 0 16px;\n      font-weight: 600;\n      cursor: pointer;\n    }\n    .omnibox button:hover { background: var(--accent2); }\n\n    .tools {\n      display: flex;\n      gap: 6px;\n      flex-wrap: wrap;\n    }\n    .tools button, .tools select {\n      height: 30px;\n      border-radius: 8px;\n      border: 1px solid var(--border);\n      background: #1a1a24;\n      color: var(--text);\n      padding: 0 10px;\n      font-size: 12px;\n      cursor: pointer;\n    }\n    .tools button:hover, .tools select:hover { border-color: var(--accent); }\n    .tools .danger:hover { border-color: var(--danger); color: var(--danger); }\n\n    /* Viewport */\n    .viewport {\n      flex: 1;\n      position: relative;\n      background: #000;\n    }\n    .viewport iframe {\n      position: absolute;\n      inset: 0;\n      width: 100%;\n      height: 100%;\n      border: 0;\n      background: #fff;\n    }\n    .empty {\n      position: absolute;\n      inset: 0;\n      display: flex;\n      flex-direction: column;\n      align-items: center;\n      justify-content: center;\n      gap: 16px;\n      color: var(--muted);\n      padding: 24px;\n      text-align: center;\n    }\n    .empty h1 {\n      margin: 0;\n      font-size: 1.6rem;\n      color: var(--text);\n      font-weight: 650;\n    }\n    .chips {\n      display: flex;\n      flex-wrap: wrap;\n      gap: 8px;\n      justify-content: center;\n      max-width: 560px;\n    }\n    .chip {\n      padding: 8px 14px;\n      border-radius: 999px;\n      border: 1px solid var(--border);\n      background: #1a1a24;\n      color: var(--text);\n      font-size: 13px;\n      cursor: pointer;\n      text-decoration: none;\n    }\n    .chip:hover { border-color: var(--accent); }\n\n    .status {\n      font-size: 11px;\n      color: var(--muted);\n      padding: 4px 10px;\n      border-top: 1px solid var(--border);\n      background: var(--panel);\n      display: flex;\n      justify-content: space-between;\n    }\n\n    .modal-bg {\n      position: fixed; inset: 0;\n      background: rgba(0,0,0,.55);\n      display: none;\n      align-items: center;\n      justify-content: center;\n      z-index: 50;\n    }\n    .modal-bg.show { display: flex; }\n    .modal {\n      width: min(420px, 92vw);\n      background: var(--panel);\n      border: 1px solid var(--border);\n      border-radius: 14px;\n      padding: 18px;\n    }\n    .modal h3 { margin: 0 0 10px; }\n    .modal label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }\n    .modal input {\n      width: 100%;\n      padding: 10px 12px;\n      border-radius: 8px;\n      border: 1px solid var(--border);\n      background: #1a1a24;\n      color: var(--text);\n    }\n    .modal .row { display: flex; gap: 8px; margin-top: 14px; }\n    .modal .row button {\n      flex: 1;\n      height: 36px;\n      border-radius: 8px;\n      border: 1px solid var(--border);\n      background: #1a1a24;\n      color: var(--text);\n      cursor: pointer;\n    }\n    .modal .row button.primary {\n      background: var(--accent);\n      border-color: var(--accent);\n      color: #fff;\n      font-weight: 600;\n    }\n  </style>\n</head>\n<body>\n  <div class=\"chrome\">\n    <div class=\"tabs\" id=\"tabs\">\n      <button class=\"new-tab\" id=\"btnNew\" title=\"New tab\">+</button>\n    </div>\n    <div class=\"bar\">\n      <div class=\"navbtns\">\n        <button id=\"btnBack\" title=\"Back\">\u2190</button>\n        <button id=\"btnFwd\" title=\"Forward\">\u2192</button>\n        <button id=\"btnReload\" title=\"Reload\">\u21bb</button>\n      </div>\n      <form class=\"omnibox\" id=\"form\">\n        <input id=\"url\" type=\"text\" placeholder=\"Search DuckDuckGo or enter URL\u2026\" autocomplete=\"off\" spellcheck=\"false\" />\n        <button type=\"submit\">Go</button>\n      </form>\n    </div>\n    <div class=\"tools\">\n      <button id=\"btnHome\">Home</button>\n      <button id=\"btnCloak\">Cloak tab</button>\n      <button id=\"btnPermCloak\">Perm cloak (cookie)</button>\n      <button id=\"btnOverride\">Title / Favicon\u2026</button>\n      <button id=\"btnResetX\" class=\"danger\">Reset xk.x.*</button>\n      <button id=\"btnClearSticky\" class=\"danger\">Clear sticky host</button>\n      <select id=\"proto\">\n        <option value=\"\">https (default)</option>\n        <option value=\"0\">force http</option>\n        <option value=\"1\">force https</option>\n      </select>\n      <select id=\"allowjs\">\n        <option value=\"\">JS on</option>\n        <option value=\"0\">JS off</option>\n      </select>\n    </div>\n  </div>\n\n  <div class=\"viewport\" id=\"viewport\">\n    <div class=\"empty\" id=\"empty\">\n      <h1>XK Proxy</h1>\n      <div>Search or open a site. Sticky origin + cloak built in.</div>\n      <div class=\"chips\">\n        <a class=\"chip\" data-go=\"duckduckgo.com\">DuckDuckGo</a>\n        <a class=\"chip\" data-go=\"example.com\">example.com</a>\n        <a class=\"chip\" data-go=\"y8.com?xk.proxy.http=0\">y8 (HTTP)</a>\n        <a class=\"chip\" data-go=\"wikipedia.org\">Wikipedia</a>\n      </div>\n    </div>\n  </div>\n\n  <div class=\"status\">\n    <span id=\"statusLeft\">Ready</span>\n    <span id=\"statusRight\">XK Proxy 2.0</span>\n  </div>\n\n  <div class=\"modal-bg\" id=\"modal\">\n    <div class=\"modal\">\n      <h3>Persistent override (xk.x.*)</h3>\n      <label>Title (xk.x.title)</label>\n      <input id=\"mTitle\" placeholder=\"Google Classroom\" />\n      <label>Favicon host (xk.x.image)</label>\n      <input id=\"mImage\" placeholder=\"Google / clever / google.com\" />\n      <div class=\"row\">\n        <button id=\"mCancel\">Cancel</button>\n        <button class=\"primary\" id=\"mApply\">Apply cookies</button>\n      </div>\n    </div>\n  </div>\n\n  <script>\n  (function () {\n    var tabs = [];\n    var active = -1;\n\n    var tabsEl = document.getElementById(\"tabs\");\n    var viewport = document.getElementById(\"viewport\");\n    var empty = document.getElementById(\"empty\");\n    var urlInput = document.getElementById(\"url\");\n    var statusLeft = document.getElementById(\"statusLeft\");\n    var form = document.getElementById(\"form\");\n\n    function isUrl(t) {\n      t = (t || \"\").trim();\n      if (/^https?:\\/\\//i.test(t)) return true;\n      if (/^[a-z0-9.-]+\\.[a-z]{2,}([\\/:?#]|$)/i.test(t)) return true;\n      return false;\n    }\n\n    function buildProxyPath(raw) {\n      raw = (raw || \"\").trim();\n      if (!raw) return null;\n      var q = [];\n      var proto = document.getElementById(\"proto\").value;\n      var allowjs = document.getElementById(\"allowjs\").value;\n      if (proto !== \"\") q.push(\"xk.proxy.http=\" + proto);\n      if (allowjs !== \"\") q.push(\"xk.allowjs=\" + allowjs);\n\n      var target;\n      if (isUrl(raw)) {\n        target = raw.replace(/^https?:\\/\\//i, \"\");\n      } else {\n        target = \"duckduckgo.com/?q=\" + encodeURIComponent(raw);\n      }\n      var path = \"/:/\" + target;\n      if (q.length) {\n        path += (path.indexOf(\"?\") >= 0 ? \"&\" : \"?\") + q.join(\"&\");\n      }\n      return path;\n    }\n\n    function renderTabs() {\n      // remove old tab buttons (keep +)\n      var nodes = tabsEl.querySelectorAll(\".tab\");\n      nodes.forEach(function (n) { n.remove(); });\n      tabs.forEach(function (t, i) {\n        var el = document.createElement(\"div\");\n        el.className = \"tab\" + (i === active ? \" active\" : \"\");\n        el.title = t.title || t.url;\n        el.innerHTML = \"<span>\" + (t.title || t.url || \"New Tab\").replace(/</g, \"&lt;\") + \"</span><span class='x'>\u00d7</span>\";\n        el.addEventListener(\"click\", function (e) {\n          if (e.target.classList.contains(\"x\")) {\n            closeTab(i);\n          } else {\n            activate(i);\n          }\n        });\n        tabsEl.insertBefore(el, document.getElementById(\"btnNew\"));\n      });\n    }\n\n    function activate(i) {\n      if (i < 0 || i >= tabs.length) return;\n      active = i;\n      tabs.forEach(function (t, idx) {\n        if (t.iframe) t.iframe.style.display = idx === active ? \"block\" : \"none\";\n      });\n      empty.style.display = tabs.length ? \"none\" : \"flex\";\n      urlInput.value = tabs[i] ? tabs[i].url : \"\";\n      statusLeft.textContent = tabs[i] ? tabs[i].url : \"Ready\";\n      renderTabs();\n    }\n\n    function closeTab(i) {\n      var t = tabs[i];\n      if (t && t.iframe) t.iframe.remove();\n      tabs.splice(i, 1);\n      if (!tabs.length) {\n        active = -1;\n        empty.style.display = \"flex\";\n        urlInput.value = \"\";\n        statusLeft.textContent = \"Ready\";\n      } else {\n        activate(Math.max(0, i - 1));\n      }\n      renderTabs();\n    }\n\n    function openInTab(path, title) {\n      empty.style.display = \"none\";\n      var iframe = document.createElement(\"iframe\");\n      iframe.setAttribute(\"allow\", \"accelerometer; autoplay; camera; clipboard-read; clipboard-write; encrypted-media; fullscreen; geolocation; gyroscope; microphone; midi; payment; picture-in-picture; sync-xhr; usb; xr-spatial-tracking\");\n      iframe.allowFullscreen = true;\n      iframe.src = path;\n      viewport.appendChild(iframe);\n      var tab = { url: path, title: title || path, iframe: iframe };\n      tabs.push(tab);\n      activate(tabs.length - 1);\n\n      iframe.addEventListener(\"load\", function () {\n        try {\n          var docTitle = iframe.contentDocument && iframe.contentDocument.title;\n          if (docTitle) {\n            tab.title = docTitle;\n            renderTabs();\n          }\n        } catch (e) {}\n      });\n    }\n\n    form.addEventListener(\"submit\", function (e) {\n      e.preventDefault();\n      var path = buildProxyPath(urlInput.value);\n      if (!path) return;\n      openInTab(path, urlInput.value.trim());\n    });\n\n    document.getElementById(\"btnNew\").addEventListener(\"click\", function () {\n      empty.style.display = \"flex\";\n      // create blank tab slot conceptually \u2014 just focus empty\n      active = -1;\n      tabs.forEach(function (t) { if (t.iframe) t.iframe.style.display = \"none\"; });\n      urlInput.value = \"\";\n      urlInput.focus();\n      renderTabs();\n    });\n\n    document.getElementById(\"btnBack\").addEventListener(\"click\", function () {\n      var t = tabs[active];\n      if (t && t.iframe && t.iframe.contentWindow) {\n        try { t.iframe.contentWindow.history.back(); } catch (e) {}\n      }\n    });\n    document.getElementById(\"btnFwd\").addEventListener(\"click\", function () {\n      var t = tabs[active];\n      if (t && t.iframe && t.iframe.contentWindow) {\n        try { t.iframe.contentWindow.history.forward(); } catch (e) {}\n      }\n    });\n    document.getElementById(\"btnReload\").addEventListener(\"click\", function () {\n      var t = tabs[active];\n      if (t && t.iframe) t.iframe.src = t.iframe.src;\n    });\n\n    document.getElementById(\"btnHome\").addEventListener(\"click\", function () {\n      location.href = \"/?xk.index\";\n    });\n\n    document.getElementById(\"btnCloak\").addEventListener(\"click\", function () {\n      var t = tabs[active];\n      if (!t) return alert(\"Open a tab first\");\n      var u = t.url;\n      u += (u.indexOf(\"?\") >= 0 ? \"&\" : \"?\") + \"xk.cloak=1\";\n      t.iframe.src = u;\n      t.url = u;\n      urlInput.value = u;\n    });\n\n    document.getElementById(\"btnPermCloak\").addEventListener(\"click\", function () {\n      // set permanent cloak cookie via navigation\n      var t = tabs[active];\n      var base = t ? t.url : \"/:/duckduckgo.com\";\n      var u = base + (base.indexOf(\"?\") >= 0 ? \"&\" : \"?\") + \"xk.x.cloak=1\";\n      if (t) {\n        t.iframe.src = u;\n        t.url = u;\n      } else {\n        openInTab(u, \"Perm cloak\");\n      }\n    });\n\n    document.getElementById(\"btnOverride\").addEventListener(\"click\", function () {\n      document.getElementById(\"modal\").classList.add(\"show\");\n    });\n    document.getElementById(\"mCancel\").addEventListener(\"click\", function () {\n      document.getElementById(\"modal\").classList.remove(\"show\");\n    });\n    document.getElementById(\"mApply\").addEventListener(\"click\", function () {\n      var title = document.getElementById(\"mTitle\").value.trim();\n      var image = document.getElementById(\"mImage\").value.trim();\n      var params = [];\n      if (title) params.push(\"xk.x.title=\" + encodeURIComponent(title));\n      if (image) params.push(\"xk.x.image=\" + encodeURIComponent(image));\n      if (!params.length) return;\n      var t = tabs[active];\n      var base = t ? t.url : \"/:/duckduckgo.com\";\n      var u = base + (base.indexOf(\"?\") >= 0 ? \"&\" : \"?\") + params.join(\"&\");\n      document.getElementById(\"modal\").classList.remove(\"show\");\n      if (t) {\n        t.iframe.src = u;\n        t.url = u;\n      } else {\n        openInTab(u, title || \"Override\");\n      }\n    });\n\n    document.getElementById(\"btnResetX\").addEventListener(\"click\", function () {\n      location.href = \"/?xk.x.n=1\";\n    });\n\n    document.getElementById(\"btnClearSticky\").addEventListener(\"click\", function () {\n      location.href = \"/?xk.index\";\n    });\n\n    document.querySelectorAll(\"[data-go]\").forEach(function (el) {\n      el.addEventListener(\"click\", function (e) {\n        e.preventDefault();\n        var path = buildProxyPath(el.getAttribute(\"data-go\"));\n        openInTab(path, el.textContent);\n      });\n    });\n  })();\n  </script>\n</body>\n</html>\n";
+
 
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const RATE_LIMIT_MAX = 100;
@@ -197,20 +200,33 @@ async function checkBanAndRate(request, env) {
   return { blocked: false, ipHash };
 }
 
-/** Serve static homepage / assets via ASSETS binding */
+/** Serve static assets via ASSETS; null if missing */
 async function serveAsset(env, request, path) {
   if (!env.ASSETS) return null;
   try {
-    // Try exact path
-    let res = await env.ASSETS.fetch(new Request(new URL(path, request.url), request));
+    const u = new URL(path, "https://assets.local");
+    const res = await env.ASSETS.fetch(u.pathname + u.search);
     if (res && res.status !== 404) return res;
-    // Try without leading issues
-    if (path.endsWith("/")) {
-      res = await env.ASSETS.fetch(new Request(new URL(path + "index.html", request.url), request));
-      if (res && res.status !== 404) return res;
-    }
+  } catch {}
+  try {
+    const res = await env.ASSETS.fetch(new Request(new URL(path, request.url), { method: "GET" }));
+    if (res && res.status !== 404) return res;
   } catch {}
   return null;
+}
+
+function homepageResponse(extraHeaders) {
+  const h = new Headers({
+    "content-type": "text/html; charset=utf-8",
+    "Cache-Control": "no-store",
+    "Server": "xk",
+  });
+  if (extraHeaders) {
+    for (const [k, v] of extraHeaders.entries()) {
+      if (k.toLowerCase() === "set-cookie") h.append(k, v);
+    }
+  }
+  return new Response(HOMEPAGE_HTML, { status: 200, headers: h });
 }
 
 function buildClientScript(opts) {
@@ -394,16 +410,15 @@ export default {
     if (xk.clearIndex) {
       clearCookie(outHeaders, COOKIE_ORIGIN);
       cookieTouched = true;
-      const home = await serveAsset(env, request, "/xk/public/index.html");
-      if (home) {
+      const home = await serveAsset(env, request, "/xk/public/index.html")
+        || await serveAsset(env, request, "/index.html");
+      if (home && home.ok) {
         const body = await home.text();
         outHeaders.set("content-type", "text/html; charset=utf-8");
         outHeaders.set("Cache-Control", "no-store");
         return new Response(body, { status: 200, headers: outHeaders });
       }
-      return new Response("Homepage missing. Ensure xk/public/index.html is deployed and ASSETS is available.", {
-        status: 500, headers: outHeaders,
-      });
+      return homepageResponse(outHeaders);
     }
 
     // If only resetting x cookies on root, show homepage
@@ -468,23 +483,21 @@ export default {
       }
     }
 
-    // Homepage
+    // Homepage — try static assets, always fall back to embedded copy
     if (!targetUrl) {
-      const home = await serveAsset(env, request, "/xk/public/index.html");
-      if (home) {
-        const body = await home.text();
-        outHeaders.set("content-type", "text/html; charset=utf-8");
-        outHeaders.set("Cache-Control", "no-store");
-        return new Response(body, { status: 200, headers: outHeaders });
+      const home = await serveAsset(env, request, "/xk/public/index.html")
+        || await serveAsset(env, request, "/index.html");
+      if (home && home.ok) {
+        try {
+          const body = await home.text();
+          if (body && body.length > 100) {
+            outHeaders.set("content-type", "text/html; charset=utf-8");
+            outHeaders.set("Cache-Control", "no-store");
+            return new Response(body, { status: 200, headers: outHeaders });
+          }
+        } catch {}
       }
-      return new Response(
-        "Homepage missing (xk/public/index.html).\n" +
-        "Cloudflare Pages must include the xk/ folder as static assets.\n" +
-        "Check: Pages → Settings → Builds → that there is NO 'Output directory' filtering them out,\n" +
-        "and that the deployment file list contains xk/public/index.html.\n" +
-        "env.ASSETS " + (env.ASSETS ? "is present" : "is MISSING"),
-        { status: 500, headers: { "content-type": "text/plain", Server: "xk" } }
-      );
+      return homepageResponse(outHeaders);
     }
 
     // Skip cloak injection when request is the inner frame of a cloak
