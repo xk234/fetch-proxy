@@ -699,7 +699,6 @@ export default {
     const retryableMethod = request.method === "GET" || request.method === "HEAD";
     const maxAttempts = retryableMethod ? 3 : 1;
     let upstream = null;
-    let upstreamError = null;
     let attempts = 0;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       attempts = attempt;
@@ -710,12 +709,12 @@ export default {
           body: retryableMethod ? undefined : request.body,
           redirect: "manual",
         });
-        upstreamError = null;
         const transientStatus = [500, 502, 503, 504].includes(upstream.status);
         if (!retryableMethod || !transientStatus || attempt === maxAttempts) break;
         try { if (upstream.body) await upstream.body.cancel(); } catch {}
-      } catch (error) {
-        upstreamError = error;
+        upstream = null;
+      } catch {
+        upstream = null;
         if (!retryableMethod || attempt === maxAttempts) break;
       }
       const retryAfterSeconds = upstream && Number(upstream.headers.get("retry-after"));
