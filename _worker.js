@@ -4,7 +4,7 @@
  * Sticky origin · cloak (loop-safe) · persistent xk.x.* · separate homepage
  */
 
-const VERSION = "2.0.8-apex";
+const VERSION = "2.0.9-apex";
 
 const HOMEPAGE_HTML = "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n  <meta charset=\"utf-8\" />\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n  <title>XK Proxy</title>\n  <style>\n    :root {\n      color-scheme: dark;\n      --bg: #0b0b0f;\n      --panel: #12121a;\n      --border: #23232f;\n      --text: #e8e8ed;\n      --muted: #8b8b9a;\n      --accent: #5b8cff;\n      --accent2: #3d6ef0;\n      --danger: #ef4444;\n      --ok: #22c55e;\n    }\n    * { box-sizing: border-box; }\n    html, body { height: 100%; margin: 0; }\n    body {\n      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;\n      background: var(--bg);\n      color: var(--text);\n      display: flex;\n      flex-direction: column;\n    }\n\n    /* Top chrome */\n    .chrome {\n      background: var(--panel);\n      border-bottom: 1px solid var(--border);\n      padding: 8px 10px 10px;\n      display: flex;\n      flex-direction: column;\n      gap: 8px;\n    }\n    .tabs {\n      display: flex;\n      gap: 6px;\n      align-items: center;\n      overflow-x: auto;\n    }\n    .tab {\n      display: flex;\n      align-items: center;\n      gap: 8px;\n      padding: 6px 12px;\n      background: #1a1a24;\n      border: 1px solid var(--border);\n      border-radius: 8px 8px 0 0;\n      font-size: 12px;\n      color: var(--muted);\n      cursor: pointer;\n      max-width: 180px;\n      white-space: nowrap;\n      overflow: hidden;\n      text-overflow: ellipsis;\n    }\n    .tab.active {\n      background: var(--bg);\n      color: var(--text);\n      border-bottom-color: var(--bg);\n    }\n    .tab .x {\n      opacity: 0.5;\n      font-size: 14px;\n      line-height: 1;\n    }\n    .tab .x:hover { opacity: 1; color: var(--danger); }\n    .new-tab {\n      width: 28px; height: 28px;\n      border-radius: 8px;\n      border: 1px solid var(--border);\n      background: #1a1a24;\n      color: var(--text);\n      cursor: pointer;\n      font-size: 16px;\n    }\n\n    .bar {\n      display: flex;\n      gap: 8px;\n      align-items: center;\n    }\n    .navbtns { display: flex; gap: 4px; }\n    .navbtns button {\n      width: 32px; height: 32px;\n      border-radius: 8px;\n      border: 1px solid var(--border);\n      background: #1a1a24;\n      color: var(--text);\n      cursor: pointer;\n    }\n    .navbtns button:hover { border-color: var(--accent); }\n    .omnibox {\n      flex: 1;\n      display: flex;\n      background: #1a1a24;\n      border: 1px solid var(--border);\n      border-radius: 10px;\n      overflow: hidden;\n    }\n    .omnibox input {\n      flex: 1;\n      border: 0;\n      background: transparent;\n      color: var(--text);\n      padding: 10px 12px;\n      font-size: 14px;\n      outline: none;\n    }\n    .omnibox button {\n      border: 0;\n      background: var(--accent);\n      color: #fff;\n      padding: 0 16px;\n      font-weight: 600;\n      cursor: pointer;\n    }\n    .omnibox button:hover { background: var(--accent2); }\n\n    .tools {\n      display: flex;\n      gap: 6px;\n      flex-wrap: wrap;\n    }\n    .tools button, .tools select {\n      height: 30px;\n      border-radius: 8px;\n      border: 1px solid var(--border);\n      background: #1a1a24;\n      color: var(--text);\n      padding: 0 10px;\n      font-size: 12px;\n      cursor: pointer;\n    }\n    .tools button:hover, .tools select:hover { border-color: var(--accent); }\n    .tools .danger:hover { border-color: var(--danger); color: var(--danger); }\n\n    /* Viewport */\n    .viewport {\n      flex: 1;\n      position: relative;\n      background: #000;\n    }\n    .viewport iframe {\n      position: absolute;\n      inset: 0;\n      width: 100%;\n      height: 100%;\n      border: 0;\n      background: #fff;\n    }\n    .empty {\n      position: absolute;\n      inset: 0;\n      display: flex;\n      flex-direction: column;\n      align-items: center;\n      justify-content: center;\n      gap: 16px;\n      color: var(--muted);\n      padding: 24px;\n      text-align: center;\n    }\n    .empty h1 {\n      margin: 0;\n      font-size: 1.6rem;\n      color: var(--text);\n      font-weight: 650;\n    }\n    .chips {\n      display: flex;\n      flex-wrap: wrap;\n      gap: 8px;\n      justify-content: center;\n      max-width: 560px;\n    }\n    .chip {\n      padding: 8px 14px;\n      border-radius: 999px;\n      border: 1px solid var(--border);\n      background: #1a1a24;\n      color: var(--text);\n      font-size: 13px;\n      cursor: pointer;\n      text-decoration: none;\n    }\n    .chip:hover { border-color: var(--accent); }\n\n    .status {\n      font-size: 11px;\n      color: var(--muted);\n      padding: 4px 10px;\n      border-top: 1px solid var(--border);\n      background: var(--panel);\n      display: flex;\n      justify-content: space-between;\n    }\n\n    .modal-bg {\n      position: fixed; inset: 0;\n      background: rgba(0,0,0,.55);\n      display: none;\n      align-items: center;\n      justify-content: center;\n      z-index: 50;\n    }\n    .modal-bg.show { display: flex; }\n    .modal {\n      width: min(420px, 92vw);\n      background: var(--panel);\n      border: 1px solid var(--border);\n      border-radius: 14px;\n      padding: 18px;\n    }\n    .modal h3 { margin: 0 0 10px; }\n    .modal label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }\n    .modal input {\n      width: 100%;\n      padding: 10px 12px;\n      border-radius: 8px;\n      border: 1px solid var(--border);\n      background: #1a1a24;\n      color: var(--text);\n    }\n    .modal .row { display: flex; gap: 8px; margin-top: 14px; }\n    .modal .row button {\n      flex: 1;\n      height: 36px;\n      border-radius: 8px;\n      border: 1px solid var(--border);\n      background: #1a1a24;\n      color: var(--text);\n      cursor: pointer;\n    }\n    .modal .row button.primary {\n      background: var(--accent);\n      border-color: var(--accent);\n      color: #fff;\n      font-weight: 600;\n    }\n  </style>\n</head>\n<body>\n  <div class=\"chrome\">\n    <div class=\"tabs\" id=\"tabs\">\n      <button class=\"new-tab\" id=\"btnNew\" title=\"New tab\">+</button>\n    </div>\n    <div class=\"bar\">\n      <div class=\"navbtns\">\n        <button id=\"btnBack\" title=\"Back\">\u2190</button>\n        <button id=\"btnFwd\" title=\"Forward\">\u2192</button>\n        <button id=\"btnReload\" title=\"Reload\">\u21bb</button>\n      </div>\n      <form class=\"omnibox\" id=\"form\">\n        <input id=\"url\" type=\"text\" placeholder=\"Search DuckDuckGo or enter URL\u2026\" autocomplete=\"off\" spellcheck=\"false\" />\n        <button type=\"submit\">Go</button>\n      </form>\n    </div>\n    <div class=\"tools\">\n      <button id=\"btnHome\">Home</button>\n      <button id=\"btnCloak\">Cloak tab</button>\n      <button id=\"btnPermCloak\">Perm cloak (cookie)</button>\n      <button id=\"btnOverride\">Title / Favicon\u2026</button>\n      <button id=\"btnResetX\" class=\"danger\">Reset xk.x.*</button>\n      <button id=\"btnClearSticky\" class=\"danger\">Clear sticky host</button>\n      <select id=\"proto\">\n        <option value=\"\">https (default)</option>\n        <option value=\"0\">force http</option>\n        <option value=\"1\">force https</option>\n      </select>\n      <select id=\"allowjs\">\n        <option value=\"\">JS on</option>\n        <option value=\"0\">JS off</option>\n      </select>\n    </div>\n  </div>\n\n  <div class=\"viewport\" id=\"viewport\">\n    <div class=\"empty\" id=\"empty\">\n      <h1>XK Proxy</h1>\n      <div>Search or open a site. Sticky origin + cloak built in.</div>\n      <div class=\"chips\">\n        <a class=\"chip\" data-go=\"duckduckgo.com\">DuckDuckGo</a>\n        <a class=\"chip\" data-go=\"example.com\">example.com</a>\n        <a class=\"chip\" data-go=\"y8.com?xk.proxy.http=0\">y8 (HTTP)</a>\n        <a class=\"chip\" data-go=\"wikipedia.org\">Wikipedia</a>\n        <a class=\"chip\" data-go=\"www.tiktok.com/\">TikTok</a>\n      </div>\n    </div>\n  </div>\n\n  <div class=\"status\">\n    <span id=\"statusLeft\">Ready</span>\n    <span id=\"statusRight\">XK Proxy 2.0</span>\n  </div>\n\n  <div class=\"modal-bg\" id=\"modal\">\n    <div class=\"modal\">\n      <h3>Persistent override (xk.x.*)</h3>\n      <label>Title (xk.x.title)</label>\n      <input id=\"mTitle\" placeholder=\"Google Classroom\" />\n      <label>Favicon host (xk.x.image)</label>\n      <input id=\"mImage\" placeholder=\"Google / clever / google.com\" />\n      <div class=\"row\">\n        <button id=\"mCancel\">Cancel</button>\n        <button class=\"primary\" id=\"mApply\">Apply cookies</button>\n      </div>\n    </div>\n  </div>\n\n  <script>\n  (function () {\n    var tabs = [];\n    var active = -1;\n\n    var tabsEl = document.getElementById(\"tabs\");\n    var viewport = document.getElementById(\"viewport\");\n    var empty = document.getElementById(\"empty\");\n    var urlInput = document.getElementById(\"url\");\n    var statusLeft = document.getElementById(\"statusLeft\");\n    var form = document.getElementById(\"form\");\n\n    function isUrl(t) {\n      t = (t || \"\").trim();\n      if (/^https?:\\/\\//i.test(t)) return true;\n      if (/^[a-z0-9.-]+\\.[a-z]{2,}([\\/:?#]|$)/i.test(t)) return true;\n      return false;\n    }\n\n    function buildProxyPath(raw) {\n      raw = (raw || \"\").trim();\n      if (!raw) return null;\n      var q = [];\n      var proto = document.getElementById(\"proto\").value;\n      var allowjs = document.getElementById(\"allowjs\").value;\n      if (proto !== \"\") q.push(\"xk.proxy.http=\" + proto);\n      if (allowjs !== \"\") q.push(\"xk.allowjs=\" + allowjs);\n\n      var target;\n      if (isUrl(raw)) {\n        target = raw.replace(/^https?:\\/\\//i, \"\");\n      } else {\n        target = \"duckduckgo.com/?q=\" + encodeURIComponent(raw);\n      }\n      var path = \"/:/\" + target;\n      if (q.length) {\n        path += (path.indexOf(\"?\") >= 0 ? \"&\" : \"?\") + q.join(\"&\");\n      }\n      return path;\n    }\n\n    function renderTabs() {\n      // remove old tab buttons (keep +)\n      var nodes = tabsEl.querySelectorAll(\".tab\");\n      nodes.forEach(function (n) { n.remove(); });\n      tabs.forEach(function (t, i) {\n        var el = document.createElement(\"div\");\n        el.className = \"tab\" + (i === active ? \" active\" : \"\");\n        el.title = t.title || t.url;\n        el.innerHTML = \"<span>\" + (t.title || t.url || \"New Tab\").replace(/</g, \"&lt;\") + \"</span><span class='x'>\u00d7</span>\";\n        el.addEventListener(\"click\", function (e) {\n          if (e.target.classList.contains(\"x\")) {\n            closeTab(i);\n          } else {\n            activate(i);\n          }\n        });\n        tabsEl.insertBefore(el, document.getElementById(\"btnNew\"));\n      });\n    }\n\n    function activate(i) {\n      if (i < 0 || i >= tabs.length) return;\n      active = i;\n      tabs.forEach(function (t, idx) {\n        if (t.iframe) t.iframe.style.display = idx === active ? \"block\" : \"none\";\n      });\n      empty.style.display = tabs.length ? \"none\" : \"flex\";\n      urlInput.value = tabs[i] ? tabs[i].url : \"\";\n      statusLeft.textContent = tabs[i] ? tabs[i].url : \"Ready\";\n      renderTabs();\n    }\n\n    function closeTab(i) {\n      var t = tabs[i];\n      if (t && t.iframe) t.iframe.remove();\n      tabs.splice(i, 1);\n      if (!tabs.length) {\n        active = -1;\n        empty.style.display = \"flex\";\n        urlInput.value = \"\";\n        statusLeft.textContent = \"Ready\";\n      } else {\n        activate(Math.max(0, i - 1));\n      }\n      renderTabs();\n    }\n\n    function openInTab(path, title) {\n      empty.style.display = \"none\";\n      var iframe = document.createElement(\"iframe\");\n      iframe.setAttribute(\"allow\", \"accelerometer; autoplay; camera; clipboard-read; clipboard-write; encrypted-media; fullscreen; geolocation; gyroscope; microphone; midi; payment; picture-in-picture; sync-xhr; usb; xr-spatial-tracking\");\n      iframe.allowFullscreen = true;\n      iframe.src = path;\n      viewport.appendChild(iframe);\n      var tab = { url: path, title: title || path, iframe: iframe };\n      tabs.push(tab);\n      activate(tabs.length - 1);\n\n      iframe.addEventListener(\"load\", function () {\n        try {\n          var docTitle = iframe.contentDocument && iframe.contentDocument.title;\n          if (docTitle) {\n            tab.title = docTitle;\n            renderTabs();\n          }\n        } catch (e) {}\n      });\n    }\n\n    form.addEventListener(\"submit\", function (e) {\n      e.preventDefault();\n      var path = buildProxyPath(urlInput.value);\n      if (!path) return;\n      openInTab(path, urlInput.value.trim());\n    });\n\n    document.getElementById(\"btnNew\").addEventListener(\"click\", function () {\n      empty.style.display = \"flex\";\n      // create blank tab slot conceptually \u2014 just focus empty\n      active = -1;\n      tabs.forEach(function (t) { if (t.iframe) t.iframe.style.display = \"none\"; });\n      urlInput.value = \"\";\n      urlInput.focus();\n      renderTabs();\n    });\n\n    document.getElementById(\"btnBack\").addEventListener(\"click\", function () {\n      var t = tabs[active];\n      if (t && t.iframe && t.iframe.contentWindow) {\n        try { t.iframe.contentWindow.history.back(); } catch (e) {}\n      }\n    });\n    document.getElementById(\"btnFwd\").addEventListener(\"click\", function () {\n      var t = tabs[active];\n      if (t && t.iframe && t.iframe.contentWindow) {\n        try { t.iframe.contentWindow.history.forward(); } catch (e) {}\n      }\n    });\n    document.getElementById(\"btnReload\").addEventListener(\"click\", function () {\n      var t = tabs[active];\n      if (t && t.iframe) t.iframe.src = t.iframe.src;\n    });\n\n    document.getElementById(\"btnHome\").addEventListener(\"click\", function () {\n      location.href = \"/?xk.index\";\n    });\n\n    document.getElementById(\"btnCloak\").addEventListener(\"click\", function () {\n      var t = tabs[active];\n      if (!t) return alert(\"Open a tab first\");\n      var u = t.url;\n      u += (u.indexOf(\"?\") >= 0 ? \"&\" : \"?\") + \"xk.cloak=1\";\n      t.iframe.src = u;\n      t.url = u;\n      urlInput.value = u;\n    });\n\n    document.getElementById(\"btnPermCloak\").addEventListener(\"click\", function () {\n      // set permanent cloak cookie via navigation\n      var t = tabs[active];\n      var base = t ? t.url : \"/:/duckduckgo.com\";\n      var u = base + (base.indexOf(\"?\") >= 0 ? \"&\" : \"?\") + \"xk.x.cloak=1\";\n      if (t) {\n        t.iframe.src = u;\n        t.url = u;\n      } else {\n        openInTab(u, \"Perm cloak\");\n      }\n    });\n\n    document.getElementById(\"btnOverride\").addEventListener(\"click\", function () {\n      document.getElementById(\"modal\").classList.add(\"show\");\n    });\n    document.getElementById(\"mCancel\").addEventListener(\"click\", function () {\n      document.getElementById(\"modal\").classList.remove(\"show\");\n    });\n    document.getElementById(\"mApply\").addEventListener(\"click\", function () {\n      var title = document.getElementById(\"mTitle\").value.trim();\n      var image = document.getElementById(\"mImage\").value.trim();\n      var params = [];\n      if (title) params.push(\"xk.x.title=\" + encodeURIComponent(title));\n      if (image) params.push(\"xk.x.image=\" + encodeURIComponent(image));\n      if (!params.length) return;\n      var t = tabs[active];\n      var base = t ? t.url : \"/:/duckduckgo.com\";\n      var u = base + (base.indexOf(\"?\") >= 0 ? \"&\" : \"?\") + params.join(\"&\");\n      document.getElementById(\"modal\").classList.remove(\"show\");\n      if (t) {\n        t.iframe.src = u;\n        t.url = u;\n      } else {\n        openInTab(u, title || \"Override\");\n      }\n    });\n\n    document.getElementById(\"btnResetX\").addEventListener(\"click\", function () {\n      location.href = \"/?xk.x.n=1\";\n    });\n\n    document.getElementById(\"btnClearSticky\").addEventListener(\"click\", function () {\n      location.href = \"/?xk.index\";\n    });\n\n    document.querySelectorAll(\"[data-go]\").forEach(function (el) {\n      el.addEventListener(\"click\", function (e) {\n        e.preventDefault();\n        var path = buildProxyPath(el.getAttribute(\"data-go\"));\n        openInTab(path, el.textContent);\n      });\n    });\n  })();\n  </script>\n</body>\n</html>\n";
 
@@ -231,24 +231,114 @@ function homepageResponse(extraHeaders) {
 
 function buildClientScript(opts) {
   const chunks = [];
+  const proxyOriginJS = "location.origin"; // evaluated client-side
+  const stickyOriginJS = opts.upstreamOrigin ? JSON.stringify(opts.upstreamOrigin) : "null";
 
-    // ---- TikTok login / age-gate remover (server-flagged) ----
+  // ===== Network rewriter: fetch + XHR absolute URLs → proxy =====
+  chunks.push(
+    '(function(){' +
+    'if(window.__xkNet)return;window.__xkNet=1;' +
+    'var UP=' + stickyOriginJS + ';' +
+    'function toProxy(u){' +
+    '  try{' +
+    '    if(!u||typeof u!=="string")return u;' +
+    '    if(u.startsWith("blob:")||u.startsWith("data:")||u.startsWith("javascript:"))return u;' +
+    '    if(u.startsWith("/:/")||u.startsWith("/:n/")||u.startsWith("/$/"))return u;' +
+    '    var abs;' +
+    '    if(/^https?:\\/\\//i.test(u))abs=u;' +
+    '    else if(u.startsWith("//"))abs=location.protocol+u;' +
+    '    else if(u.startsWith("/")&&UP){abs=UP.replace(/\\/$/,"")+u;}' +
+    '    else return u;' +
+    '    var a=new URL(abs);' +
+    '    // only rewrite if target is external (not our proxy host)' +
+    '    if(a.origin===location.origin)return u;' +
+    '    return location.origin+"/:/"+a.href;' +
+    '  }catch(e){return u;}' +
+    '}' +
+    // fetch hook
+    'try{' +
+    '  var _f=window.fetch;' +
+    '  window.fetch=function(input,init){' +
+    '    try{' +
+    '      if(typeof input==="string")input=toProxy(input);' +
+    '      else if(input&&typeof input.url==="string"){' +
+    '        var nu=toProxy(input.url);' +
+    '        if(nu!==input.url)input=new Request(nu,input);' +
+    '      }' +
+    '    }catch(e){}' +
+    '    return _f.call(this,input,init);' +
+    '  };' +
+    '}catch(e){}' +
+    // XHR hook
+    'try{' +
+    '  var _open=XMLHttpRequest.prototype.open;' +
+    '  XMLHttpRequest.prototype.open=function(method,url){' +
+    '    try{if(typeof url==="string")url=toProxy(url);}catch(e){}' +
+    '    return _open.apply(this,arguments.length>1?[method,url].concat([].slice.call(arguments,2)):[method,url]);' +
+    '  };' +
+    '}catch(e){}' +
+    '})();'
+  );
+
+  // ===== TikTok modal killer (server-flagged) =====
   if (opts.isTikTok) {
     chunks.push(
       '(function(){' +
       'function kill(){try{' +
-      'var sels=["[class*=\\"DivLoginContainer\\"]","[class*=\\"DivLogin\\"]","[class*=\\"LoginContainer\\"]","[class*=\\"age-gate\\"]","[class*=\\"AgeGate\\"]","[class*=\\"verify-age\\"]","[class*=\\"VerifyAge\\"]","[data-e2e*=\\"login\\"]"];' +
-      'for(var s=0;s<sels.length;s++){var nodes=document.querySelectorAll(sels[s]);for(var i=0;i<nodes.length;i++){try{nodes[i].remove();}catch(e){}}}' +
-      'var all=document.querySelectorAll("div,section");' +
-      'for(var i=0;i<all.length;i++){var c=(all[i].className&&String(all[i].className))||"";if(/DivLoginContainer|LoginContainer|AgeGate|age-gate|verify-age|DivLogin/i.test(c)){try{all[i].remove();}catch(e){}}}' +
+      'var re=/DivLoginContainer|LoginContainer|DivLoginModal|login-modal|AgeGate|age-gate|verify-age|VerifyAge|TUXModal|div-modal|captcha-verify|CapCutLogin/i;' +
+      'var nodes=document.querySelectorAll("div,section,aside,form");' +
+      'for(var i=0;i<nodes.length;i++){' +
+      '  var el=nodes[i];' +
+      '  var c=(el.className&&String(el.className))||"";' +
+      '  var id=el.id||"";' +
+      '  if(re.test(c)||re.test(id)){try{el.remove();}catch(e){}}' +
+      '}' +
+      // unlock body scroll often frozen by modals
+      'try{document.body.style.overflow="auto";document.documentElement.style.overflow="auto";}catch(e){}' +
       '}catch(e){}}' +
-      'kill();setInterval(kill,800);' +
+      'kill();' +
+      'setInterval(kill,600);' +
       'try{new MutationObserver(function(){kill();}).observe(document.documentElement,{childList:true,subtree:true});}catch(e){}' +
       '})();'
     );
   }
 
-// Storage tools
+  // ===== Ctrl+Alt element tools (ChromeOS-friendly) =====
+  // Ctrl+Alt+Click = delete element under cursor
+  // Ctrl+Alt + type while focused text = contenteditable edit
+  chunks.push(
+    '(function(){' +
+    'if(window.__xkTools)return;window.__xkTools=1;' +
+    'var editing=null;' +
+    'document.addEventListener("click",function(e){' +
+    '  if(!(e.ctrlKey&&e.altKey))return;' +
+    '  e.preventDefault();e.stopPropagation();' +
+    '  var t=e.target;' +
+    '  if(!t||t===document.body||t===document.documentElement)return;' +
+    '  try{t.remove();}catch(err){try{t.style.display="none";}catch(e2){}}' +
+    '},true);' +
+    'document.addEventListener("keydown",function(e){' +
+    '  if(!(e.ctrlKey&&e.altKey))return;' +
+    '  ' +
+    '  if(e.key==="e"||e.key==="E"){' +
+    '    e.preventDefault();' +
+    '    var sel=window.getSelection();' +
+    '    var n=sel&&sel.anchorNode;' +
+    '    var el=n?(n.nodeType===3?n.parentElement:n):document.activeElement;' +
+    '    if(!el)return;' +
+    '    if(editing&&editing!==el){try{editing.contentEditable="false";}catch(e){}}' +
+    '    editing=el;' +
+    '    try{el.contentEditable="true";el.focus();}catch(e){}' +
+    '  }' +
+    '  if(e.key==="Escape"&&editing){' +
+    '    try{editing.contentEditable="false";}catch(e){}' +
+    '    editing=null;' +
+    '  }' +
+    '},true);' +
+    '})();'
+  );
+
+  // Storage tools
   if (opts.lsWipe) chunks.push('try{localStorage.clear();sessionStorage.clear();}catch(e){}');
   if (opts.idbWipe) chunks.push('(async function(){try{var d=await indexedDB.databases();for(var i=0;i<d.length;i++)if(d[i].name)indexedDB.deleteDatabase(d[i].name);}catch(e){}})();');
   if (opts.opfsWipe) chunks.push('(async function(){try{if(navigator.storage&&navigator.storage.getDirectory){var r=await navigator.storage.getDirectory();for await(var e of r.entries())await r.removeEntry(e[0],{recursive:true});}}catch(e){}})();');
@@ -260,7 +350,7 @@ function buildClientScript(opts) {
     chunks.push('(function(){try{document.addEventListener("DOMContentLoaded",function(){var n=document.querySelectorAll("script");for(var i=0;i<n.length;i++)n[i].remove();},true);}catch(e){}})();');
   }
 
-  // Title + favicon lock (safe)
+  // Title + favicon
   const favHost = opts.tabFavicon ? resolveFaviconHost(opts.tabFavicon) : null;
   if (opts.tabTitle || favHost) {
     const titleJS = opts.tabTitle ? JSON.stringify(String(opts.tabTitle)) : "null";
@@ -276,7 +366,7 @@ function buildClientScript(opts) {
     );
   }
 
-  // Cloak (loop-safe)
+  // Cloak
   if (opts.cloak) {
     const titleJS = opts.tabTitle ? JSON.stringify(String(opts.tabTitle)) : "null";
     const favJS = favHost ? JSON.stringify(String(favHost)) : "null";
@@ -286,7 +376,6 @@ function buildClientScript(opts) {
       'if(window.__xkC)return;window.__xkC=1;' +
       'if(/^blob:/i.test(location.href))return;' +
       'if(/[?&]xk\\._frame=/.test(location.href))return;' +
-      'if(document.documentElement&&document.documentElement.getAttribute("data-xk-cloaked"))return;' +
       'var real=location.href;' +
       'var title=document.title||"Tab";' +
       'var fav="";try{var il=document.querySelector("link[rel*=\\"icon\\"]");if(il)fav=il.href;}catch(e){}' +
@@ -300,17 +389,17 @@ function buildClientScript(opts) {
       'h+="\\u003cstyle\\u003ehtml,body{margin:0;height:100%;overflow:hidden;background:#111}iframe{border:0;width:100%;height:100%;display:block}\\u003c/style\\u003e";' +
       'h+="\\u003c/head\\u003e\\u003cbody\\u003e";' +
       'h+="\\u003ciframe id=\\"f\\" src=\\""+src+"\\" allow=\\"fullscreen;clipboard-read;clipboard-write\\" allowfullscreen\\u003e\\u003c/iframe\\u003e";' +
-      'h+="\\u003cscript\\u003e";' +
-      'h+="(function(){var LT=' + titleJS + ',FH=' + favJS + ';" ;' +
-      'h+="if(LT){document.title=LT;try{Object.defineProperty(document,\\"title\\",{configurable:true,get:function(){return LT;},set:function(){}});}catch(e){}setInterval(function(){if(document.title!==LT)document.title=LT;},1000);}" ;' +
-      'h+="if(FH){var u=\\"https://www.google.com/s2/favicons?domain=\\"+encodeURIComponent(String(FH).replace(/^https?:\\\\/\\\\//,\\"\\"))+\\"&sz=64\\";var l=document.querySelector(\\"link[rel*=icon]\\");if(!l){l=document.createElement(\\"link\\");l.rel=\\"icon\\";document.head.appendChild(l);}l.href=u;setInterval(function(){l.href=u;},2000);}" ;' +
-      'h+="})();\\u003c/script\\u003e\\u003c/body\\u003e\\u003c/html\\u003e";' +
+      'h+="\\u003cscript\\u003e(function(){var LT=' + titleJS + ',FH=' + favJS + ';" +' +
+      '"if(LT){document.title=LT;try{Object.defineProperty(document,\\"title\\",{configurable:true,get:function(){return LT;},set:function(){}});}catch(e){}setInterval(function(){if(document.title!==LT)document.title=LT;},1000);}" +' +
+      '"if(FH){var u=\\"https://www.google.com/s2/favicons?domain=\\"+encodeURIComponent(String(FH).replace(/^https?:\\\\/\\\\//,\\"\\"))+\\"&sz=64\\";var l=document.querySelector(\\"link[rel*=icon]\\");if(!l){l=document.createElement(\\"link\\");l.rel=\\"icon\\";document.head.appendChild(l);}l.href=u;}" +' +
+      '")();\\u003c/script\\u003e\\u003c/body\\u003e\\u003c/html\\u003e";' +
       'try{location.replace(URL.createObjectURL(new Blob([h],{type:"text/html"})));}catch(e){}' +
       '})();'
     );
   }
 
   if (!chunks.length) return "";
+  // Inject as early as possible
   return '<script id="xk-ctrl">\\n(function(){\\n' + chunks.join("\\n") + "\\n})();\\n</script>";
 }
 
@@ -555,9 +644,14 @@ export default {
       if (xk.allowJs === false) body = stripScripts(body);
       // Server-side site hints (client location.hostname is the proxy, not upstream)
       try {
-        const host = new URL(targetUrl).hostname.toLowerCase();
+        const u = new URL(targetUrl);
+        const host = u.hostname.toLowerCase();
         xk.isTikTok = host === "tiktok.com" || host.endsWith(".tiktok.com");
-      } catch { xk.isTikTok = false; }
+        xk.upstreamOrigin = u.origin;
+      } catch {
+        xk.isTikTok = false;
+        xk.upstreamOrigin = null;
+      }
       body = injectClient(body, xk);
     }
 
