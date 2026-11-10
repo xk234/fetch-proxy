@@ -4,7 +4,7 @@
  * Sticky origin · cloak (loop-safe) · persistent xk.x.* · separate homepage
  */
 
-const VERSION = "2.0.5-apex";
+const VERSION = "2.0.6-apex";
 
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const RATE_LIMIT_MAX = 100;
@@ -216,7 +216,7 @@ async function serveAsset(env, request, path) {
 function buildClientScript(opts) {
   const chunks = [];
 
-  // Storage tools
+  // Storage tools (harmless)
   if (opts.lsWipe) chunks.push('try{localStorage.clear();sessionStorage.clear();}catch(e){}');
   if (opts.idbWipe) chunks.push('(async function(){try{var d=await indexedDB.databases();for(var i=0;i<d.length;i++)if(d[i].name)indexedDB.deleteDatabase(d[i].name);}catch(e){}})();');
   if (opts.opfsWipe) chunks.push('(async function(){try{if(navigator.storage&&navigator.storage.getDirectory){var r=await navigator.storage.getDirectory();for await(var e of r.entries())await r.removeEntry(e[0],{recursive:true});}}catch(e){}})();');
@@ -228,76 +228,80 @@ function buildClientScript(opts) {
     chunks.push('(function(){try{document.addEventListener("DOMContentLoaded",function(){var n=document.querySelectorAll("script");for(var i=0;i<n.length;i++)n[i].remove();},true);}catch(e){}})();');
   }
 
-  // ===== POWERFUL title + favicon lock =====
+  // Title + favicon — SAFE (no MutationObserver feedback loops)
   const favHost = opts.tabFavicon ? resolveFaviconHost(opts.tabFavicon) : null;
   if (opts.tabTitle || favHost) {
     const titleJS = opts.tabTitle ? JSON.stringify(opts.tabTitle) : "null";
     const favJS = favHost ? JSON.stringify(favHost) : "null";
     chunks.push(
       '(function(){' +
-      'var T=' + titleJS + ',F=' + favJS + ';' +
-      'function applyTitle(){if(!T)return;try{document.title=T;}catch(e){}' +
-      'try{var el=document.querySelector("title");if(el)el.textContent=T;}catch(e){}}' +
-      'function setFav(h){try{' +
-      'var links=document.querySelectorAll("link[rel*=\'icon\'],link[rel*=\'shortcut\']");' +
-      'if(!links.length){var l=document.createElement("link");l.rel="icon";document.head.appendChild(l);links=[l];}' +
-      'for(var i=0;i<links.length;i++)links[i].href=h;' +
-      '}catch(e){}}' +
-      'if(T){' +
-      'applyTitle();' +
-      'try{Object.defineProperty(document,"title",{get:function(){return T;},set:function(){applyTitle();},configurable:true});}catch(e){}' +
-      'try{var obs=new MutationObserver(function(){applyTitle();});' +
-      'obs.observe(document.documentElement,{childList:true,subtree:true,characterData:true});}catch(e){}' +
-      'setInterval(applyTitle,300);' +
+      'var T=' + titleJS + ',F=' + favJS + ',_lock=false;' +
+      'function applyTitle(){' +
+      '  if(!T||_lock)return;' +
+      '  _lock=true;' +
+      '  try{if(document.title!==T)document.title=T;}catch(e){}' +
+      '  _lock=false;' +
       '}' +
-      'if(F){var u="https://www.google.com/s2/favicons?domain="+encodeURIComponent(String(F).replace(/^https?:\\/\\//,""))+"&sz=64";' +
-      'setFav(u);setInterval(function(){setFav(u);},800);}' +
+      'function setFav(h){' +
+      '  try{' +
+      '    var l=document.querySelector("link[rel*=\\"icon\\"]");' +
+      '    if(!l){l=document.createElement("link");l.rel="icon";document.head.appendChild(l);}' +
+      '    if(l.getAttribute("href")!==h)l.setAttribute("href",h);' +
+      '  }catch(e){}' +
+      '}' +
+      'if(T){' +
+      '  applyTitle();' +
+      '  try{Object.defineProperty(document,"title",{configurable:true,get:function(){return T;},set:function(){}});}catch(e){}' +
+      '  setInterval(applyTitle,1000);' +
+      '}' +
+      'if(F){' +
+      '  var u="https://www.google.com/s2/favicons?domain="+encodeURIComponent(String(F).replace(/^https?:\\/\\//,""))+"&sz=64";' +
+      '  setFav(u);' +
+      '  setInterval(function(){setFav(u);},2000);' +
+      '}' +
       '})();'
     );
   }
 
-  // ===== CLOAK (loop-safe) =====
-  // Critical: never cloak when already inside an iframe (window !== top)
-  // Also skip if data-xk-cloaked marker present
+  // Cloak — loop-safe
   if (opts.cloak) {
     const titleJS = opts.tabTitle ? JSON.stringify(opts.tabTitle) : "null";
     const favJS = favHost ? JSON.stringify(favHost) : "null";
     chunks.push(
       '(function(){' +
-      // LOOP GUARD
+      // Never run inside iframe / already cloaked / blob
       'try{if(window!==window.top)return;}catch(e){return;}' +
       'if(window.__xkC)return;window.__xkC=1;' +
+      'if(/^blob:/i.test(location.href))return;' +
       'if(document.documentElement&&document.documentElement.getAttribute("data-xk-cloaked"))return;' +
       'var real=location.href;' +
-      // Don't cloak the cloak blob itself
-      'if(/^blob:/.test(real))return;' +
-      'var title=document.title||"...";' +
-      'var fav="";var il=document.querySelector("link[rel*=\'icon\']");if(il)fav=il.href;' +
+      // If already has frame marker, skip
+      'if(/[?&]xk\\._frame=/.test(real))return;' +
+      'var title=document.title||"Tab";' +
+      'var fav="";try{var il=document.querySelector("link[rel*=\\"icon\\"]");if(il)fav=il.href;}catch(e){}' +
       'var LT=' + titleJS + ',FH=' + favJS + ';' +
+      'var src=real+(real.indexOf("?")>=0?"&":"?")+"xk._frame=1";' +
       'var h="";' +
       'h+="\\u003c!DOCTYPE html\\u003e\\u003chtml data-xk-cloaked=\\"1\\"\\u003e\\u003chead\\u003e";' +
-      'h+="\\u003cmeta charset=\\"utf-8\\"\\u003e\\u003cmeta name=\\"viewport\\" content=\\"width=device-width,initial-scale=1\\"\\u003e";' +
+      'h+="\\u003cmeta charset=\\"utf-8\\"\\u003e";' +
       'h+="\\u003ctitle\\u003e"+String(LT||title).replace(/</g,"&lt;")+"\\u003c/title\\u003e";' +
-      'if(fav)h+="\\u003clink rel=\\"icon\\" href=\\""+fav+"\\"\\u003e";' +
-      'h+="\\u003cstyle\\u003ehtml,body{margin:0;height:100%;overflow:hidden;background:#000}iframe{border:0;width:100%;height:100%;display:block}\\u003c/style\\u003e";' +
+      'if(fav)h+="\\u003clink rel=\\"icon\\" href=\\""+String(fav).replace(/"/g,"")+"\\"\\u003e";' +
+      'h+="\\u003cstyle\\u003ehtml,body{margin:0;height:100%;overflow:hidden;background:#111}iframe{border:0;width:100%;height:100%;display:block}\\u003c/style\\u003e";' +
       'h+="\\u003c/head\\u003e\\u003cbody\\u003e";' +
-      // iframe gets a marker query so server/client know it's inside cloak
-      'var src=real+(real.indexOf("?")>=0?"&":"?")+"xk._frame=1";' +
-      'h+="\\u003ciframe id=\\"f\\" src=\\""+src+"\\" allow=\\"accelerometer;autoplay;camera;clipboard-read;clipboard-write;encrypted-media;fullscreen;geolocation;gyroscope;microphone;midi;payment;picture-in-picture;sync-xhr;usb;xr-spatial-tracking\\" allowfullscreen\\u003e\\u003c/iframe\\u003e";' +
+      'h+="\\u003ciframe id=\\"f\\" src=\\""+src+"\\" allow=\\"fullscreen;clipboard-read;clipboard-write\\" allowfullscreen\\u003e\\u003c/iframe\\u003e";' +
       'h+="\\u003cscript\\u003e";' +
-      'h+="(function(){var f=document.getElementById(\'f\'),LT=' + titleJS + ',FH=' + favJS + ';";' +
-      'h+="function sf(u){var ls=document.querySelectorAll(\'link[rel*=\\\\\'icon\\\\\']\');if(!ls.length){var l=document.createElement(\'link\');l.rel=\'icon\';document.head.appendChild(l);ls=[l];}for(var i=0;i<ls.length;i++)ls[i].href=u;}";' +
-      'h+="function at(){if(!LT)return;document.title=LT;try{Object.defineProperty(document,\'title\',{get:function(){return LT;},set:function(){},configurable:true});}catch(e){}}";' +
-      'h+="setInterval(function(){try{if(LT)at();else if(f.contentDocument&&f.contentDocument.title)document.title=f.contentDocument.title;}catch(e){}},500);at();";' +
-      'h+="if(FH){var u=\'https://www.google.com/s2/favicons?domain=\'+encodeURIComponent(String(FH).replace(/^https?:\\\\/\\\\//,\'\'))+\'&sz=64\';sf(u);setInterval(function(){sf(u);},1000);}";' +
-      'h+="})();\\u003c/script\\u003e\\u003c/body\\u003e\\u003c/html\\u003e";' +
-      'location.replace(URL.createObjectURL(new Blob([h],{type:"text/html"})));' +
+      'h+="(function(){var LT=' + titleJS + ',FH=' + favJS + ';" ;' +
+      'h+="if(LT){document.title=LT;try{Object.defineProperty(document,\\"title\\",{configurable:true,get:function(){return LT;},set:function(){}});}catch(e){}setInterval(function(){if(document.title!==LT)document.title=LT;},1000);}" ;' +
+      'h+="if(FH){var u=\\"https://www.google.com/s2/favicons?domain=\\"+encodeURIComponent(String(FH).replace(/^https?:\\\\/\\\\//,\\"\\"))+\\"&sz=64\\";var l=document.querySelector(\\"link[rel*=icon]\\");if(!l){l=document.createElement(\\"link\\");l.rel=\\"icon\\";document.head.appendChild(l);}l.href=u;setInterval(function(){l.href=u;},2000);}" ;' +
+      'h+="})();\\u003c/script\\u003e";' +
+      'h+="\\u003c/body\\u003e\\u003c/html\\u003e";' +
+      'try{location.replace(URL.createObjectURL(new Blob([h],{type:"text/html"})));}catch(e){}' +
       '})();'
     );
   }
 
   if (!chunks.length) return "";
-  return '<script id="xk-ctrl">\n(function(){\n' + chunks.join("\n") + "\n})();\n</script>";
+  return '<script id="xk-ctrl">\\n(function(){\\n' + chunks.join("\\n") + "\\n})();\\n</script>";
 }
 
 function injectClient(html, opts) {
